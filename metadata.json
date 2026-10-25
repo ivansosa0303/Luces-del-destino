@@ -1,0 +1,6 @@
+{
+  "name": "DocMerge",
+  "description": "Compilador y conversor de archivos universal (.txt, .md, .json, .pdf, .docx, imágenes) con almacenamiento local y gestión de proyectos offline.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

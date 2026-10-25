@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidProject(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+             (!('description' in data) || (data.description is string && data.description.size() <= 500)) &&
+             (!('colorHex' in data) || (data.colorHex is string && data.colorHex.size() <= 20)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidDocument(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 200 &&
+             data.extension is string && data.extension.size() >= 1 && data.extension.size() <= 20 &&
+             data.fileSizeBytes is int && data.fileSizeBytes >= 0 &&
+             (!('projectId' in data) || (data.projectId is string && data.projectId.size() <= 128)) &&
+             (!('mimeType' in data) || (data.mimeType is string && data.mimeType.size() <= 100)) &&
+             (!('sha256Checksum' in data) || (data.sha256Checksum is string && data.sha256Checksum.size() <= 64)) &&
+             (!('textSummaryOrPreview' in data) || (data.textSummaryOrPreview is string && data.textSummaryOrPreview.size() <= 2000)) &&
+             (!('orderIndex' in data) || data.orderIndex is int) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCompilation(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.outputFileName is string && data.outputFileName.size() >= 1 && data.outputFileName.size() <= 200 &&
+             data.outputFormat is string && data.outputFormat.size() >= 1 && data.outputFormat.size() <= 20 &&
+             data.fileSizeBytes is int && data.fileSizeBytes >= 0 &&
+             (!('projectId' in data) || (data.projectId is string && data.projectId.size() <= 128)) &&
+             (!('projectName' in data) || (data.projectName is string && data.projectName.size() <= 100)) &&
+             (!('sha256Checksum' in data) || (data.sha256Checksum is string && data.sha256Checksum.size() <= 64)) &&
+             (!('sourceItemCount' in data) || data.sourceItemCount is int) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    // Projects subcollection
+    match /users/{userId}/projects/{projectId} {
+      allow get, list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       isValidId(projectId) &&
+                       incoming().userId == userId &&
+                       isValidProject(incoming());
+      allow update: if isOwner(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidProject(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'colorHex', 'updatedAt']);
+      allow delete: if isOwner(userId);
+    }
+
+    // Documents subcollection
+    match /users/{userId}/documents/{documentId} {
+      allow get, list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       isValidId(documentId) &&
+                       incoming().userId == userId &&
+                       isValidDocument(incoming());
+      allow update: if isOwner(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidDocument(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'title', 'fileName', 'extension', 'projectId', 'mimeType',
+                         'fileSizeBytes', 'sha256Checksum', 'textSummaryOrPreview',
+                         'orderIndex', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId);
+    }
+
+    // Compilations subcollection
+    match /users/{userId}/compilations/{compilationId} {
+      allow get, list: if isOwner(userId);
+      allow create: if isOwner(userId) &&
+                       isValidId(compilationId) &&
+                       incoming().userId == userId &&
+                       isValidCompilation(incoming());
+      allow update: if isOwner(userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       isValidCompilation(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'projectName']);
+      allow delete: if isOwner(userId);
+    }
+  }
+}

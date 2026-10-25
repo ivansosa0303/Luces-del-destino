@@ -1,0 +1,73 @@
+{
+  "entities": {
+    "Project": {
+      "title": "Project",
+      "description": "A user-created project for grouping documents.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "colorHex": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "createdAt", "updatedAt"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Metadata and text preview of a document belonging to a project or inbox.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "title": { "type": "string" },
+        "fileName": { "type": "string" },
+        "extension": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "fileSizeBytes": { "type": "integer" },
+        "sha256Checksum": { "type": "string" },
+        "textSummaryOrPreview": { "type": "string" },
+        "orderIndex": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "fileName", "extension", "fileSizeBytes", "createdAt", "updatedAt"]
+    },
+    "Compilation": {
+      "title": "Compilation",
+      "description": "Record of a compiled unified document or converted output.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "projectName": { "type": "string" },
+        "title": { "type": "string" },
+        "outputFileName": { "type": "string" },
+        "outputFormat": { "type": "string" },
+        "fileSizeBytes": { "type": "integer" },
+        "sha256Checksum": { "type": "string" },
+        "sourceItemCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "outputFileName", "outputFormat", "fileSizeBytes", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "User projects."
+    },
+    "/users/{userId}/documents/{documentId}": {
+      "schema": { "$ref": "#/entities/Document" },
+      "description": "User documents and files."
+    },
+    "/users/{userId}/compilations/{compilationId}": {
+      "schema": { "$ref": "#/entities/Compilation" },
+      "description": "User compilation history and conversion records."
+    }
+  }
+}
