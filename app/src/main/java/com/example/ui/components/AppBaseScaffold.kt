@@ -149,6 +149,7 @@ fun AppBaseScaffold(
                         // Subtitle indicating the active tab or context
                         val subtitleText = when {
                             selectedProjectName != null -> "Proyecto activo"
+                            currentTab == AppNavTab.STORIES -> "Suite Editorial y de Historias"
                             currentTab == AppNavTab.PROJECTS -> "Gestor de Proyectos"
                             currentTab == AppNavTab.EXPLORER -> "Explorador de Documentos"
                             currentTab == AppNavTab.COMPILER -> "Compilador Unificado"

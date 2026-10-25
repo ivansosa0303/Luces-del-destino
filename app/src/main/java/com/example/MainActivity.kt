@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.CloudQueue
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
@@ -62,11 +63,14 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.SupportedFormat
 import com.example.ui.components.DocumentPreviewDialog
+import com.example.ui.screens.ChapterEditorScreen
 import com.example.ui.screens.CompilerScreen
 import com.example.ui.screens.ConverterScreen
 import com.example.ui.screens.ExplorerScreen
 import com.example.ui.screens.HistoryScreen
 import com.example.ui.screens.ProjectsScreen
+import com.example.ui.screens.StoryProjectDetailScreen
+import com.example.ui.screens.StoryProjectsScreen
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.viewmodel.AppViewModel
 
@@ -75,7 +79,8 @@ enum class AppNavTab(
     val icon: ImageVector,
     val testTag: String
 ) {
-    PROJECTS("Proyectos", Icons.Default.Folder, "tab_projects"),
+    STORIES("Historias", Icons.Default.AutoStories, "tab_stories"),
+    PROJECTS("Carpetas", Icons.Default.Folder, "tab_projects"),
     EXPLORER("Explorador", Icons.Default.Source, "tab_explorer"),
     COMPILER("Compilador", Icons.Default.Layers, "tab_compiler"),
     CONVERTER("Conversor", Icons.Default.SwapHoriz, "tab_converter"),
@@ -132,19 +137,41 @@ class MainActivity : ComponentActivity() {
                 val previewPdfPage by viewModel.previewPdfPage.collectAsStateWithLifecycle()
                 val previewPdfTotalPages by viewModel.previewPdfTotalPages.collectAsStateWithLifecycle()
 
-                var currentTab by remember { mutableStateOf(AppNavTab.EXPLORER) }
+                val storyProjects by viewModel.storyProjects.collectAsStateWithLifecycle()
+                val activeStoryProject by viewModel.activeStoryProject.collectAsStateWithLifecycle()
+                val activeStoryChapters by viewModel.activeStoryChapters.collectAsStateWithLifecycle()
+                val filteredChapters by viewModel.filteredChapters.collectAsStateWithLifecycle()
+                val activeChapter by viewModel.activeChapter.collectAsStateWithLifecycle()
+                val chapterContent by viewModel.chapterContent.collectAsStateWithLifecycle()
+                val editorialAnalysis by viewModel.editorialAnalysis.collectAsStateWithLifecycle()
+                val storyBibleEntries by viewModel.storyBibleEntries.collectAsStateWithLifecycle()
+                val filteredBibleEntries by viewModel.filteredBibleEntries.collectAsStateWithLifecycle()
+                val chapterSearchQuery by viewModel.chapterSearchQuery.collectAsStateWithLifecycle()
+                val recentGoals by viewModel.recentGoals.collectAsStateWithLifecycle()
+
+                var currentTab by remember { mutableStateOf(AppNavTab.STORIES) }
 
                 // Handle Back Navigation cleanly
-                BackHandler(enabled = previewDoc != null || currentTab != AppNavTab.EXPLORER || selectedProjectId != null) {
+                BackHandler(enabled = activeChapter != null || activeStoryProject != null || previewDoc != null || currentTab != AppNavTab.STORIES || selectedProjectId != null) {
                     when {
+                        activeChapter != null -> {
+                            viewModel.saveActiveChapter()
+                            viewModel.selectChapter(null)
+                        }
+                        activeStoryProject != null -> viewModel.selectStoryProject(null)
                         previewDoc != null -> viewModel.closeDocumentPreview()
                         selectedProjectId != null -> viewModel.selectProject(null)
-                        currentTab != AppNavTab.EXPLORER -> currentTab = AppNavTab.EXPLORER
+                        currentTab != AppNavTab.STORIES -> currentTab = AppNavTab.STORIES
                     }
                 }
 
                 val snackbarHostState = remember { SnackbarHostState() }
-                val selectedProjectName = projects.firstOrNull { it.id == selectedProjectId }?.name
+                val selectedProjectName = when {
+                    activeChapter != null -> "Cap. ${activeChapter?.chapterNumber}: ${activeChapter?.title}"
+                    activeStoryProject != null -> activeStoryProject?.name
+                    selectedProjectId != null -> projects.firstOrNull { it.id == selectedProjectId }?.name
+                    else -> null
+                }
 
                 LaunchedEffect(compilationMessage) {
                     compilationMessage?.let { msg ->
@@ -152,13 +179,18 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                val canNavigateBack = previewDoc != null || selectedProjectId != null || currentTab != AppNavTab.EXPLORER
+                val canNavigateBack = activeChapter != null || activeStoryProject != null || previewDoc != null || selectedProjectId != null || currentTab != AppNavTab.STORIES
                 val onNavigateBackAction: (() -> Unit)? = if (canNavigateBack) {
                     {
                         when {
+                            activeChapter != null -> {
+                                viewModel.saveActiveChapter()
+                                viewModel.selectChapter(null)
+                            }
+                            activeStoryProject != null -> viewModel.selectStoryProject(null)
                             previewDoc != null -> viewModel.closeDocumentPreview()
                             selectedProjectId != null -> viewModel.selectProject(null)
-                            currentTab != AppNavTab.EXPLORER -> currentTab = AppNavTab.EXPLORER
+                            currentTab != AppNavTab.STORIES -> currentTab = AppNavTab.STORIES
                         }
                     }
                 } else null
@@ -179,6 +211,76 @@ class MainActivity : ComponentActivity() {
                             .padding(innerPadding)
                     ) {
                         when (currentTab) {
+                            AppNavTab.STORIES -> {
+                                when {
+                                    activeChapter != null -> {
+                                        ChapterEditorScreen(
+                                            chapter = activeChapter!!,
+                                            content = chapterContent,
+                                            editorialAnalysis = editorialAnalysis,
+                                            bibleEntries = storyBibleEntries,
+                                            onContentChange = { viewModel.updateChapterContent(it) },
+                                            onSave = { viewModel.saveActiveChapter() },
+                                            onBack = {
+                                                viewModel.saveActiveChapter()
+                                                viewModel.selectChapter(null)
+                                            },
+                                            onToggleStatus = { chap ->
+                                                val nextStatus = when (chap.status) {
+                                                    "BORRADOR" -> "EN_REVISION"
+                                                    "EN_REVISION" -> "PULIDO"
+                                                    else -> "BORRADOR"
+                                                }
+                                                viewModel.updateChapterMetadata(chap.copy(status = nextStatus))
+                                            },
+                                            onApplyDialogueDashFix = { viewModel.applyDialogueDashFix() },
+                                            onApplyWhitespaceFix = { viewModel.applyFormattingWhitespaceFix() },
+                                            onApplyOpeningPunctuationFix = { viewModel.applyOpeningPunctuationFix() }
+                                        )
+                                    }
+                                    activeStoryProject != null -> {
+                                        StoryProjectDetailScreen(
+                                            project = activeStoryProject!!,
+                                            chapters = filteredChapters,
+                                            bibleEntries = filteredBibleEntries,
+                                            recentGoals = recentGoals,
+                                            searchQuery = chapterSearchQuery,
+                                            onSearchQueryChange = { viewModel.setChapterSearchQuery(it) },
+                                            onBack = { viewModel.selectStoryProject(null) },
+                                            onSelectChapter = { chap -> viewModel.selectChapter(chap) },
+                                            onCreateChapter = { title, summary, pov ->
+                                                viewModel.createChapter(title, summary, pov)
+                                            },
+                                            onDeleteChapter = { id -> viewModel.deleteChapter(id) },
+                                            onToggleChapterStatus = { chap ->
+                                                val nextStatus = when (chap.status) {
+                                                    "BORRADOR" -> "EN_REVISION"
+                                                    "EN_REVISION" -> "PULIDO"
+                                                    else -> "BORRADOR"
+                                                }
+                                                viewModel.updateChapterMetadata(chap.copy(status = nextStatus))
+                                            },
+                                            onCreateBibleEntry = { cat, name, role, desc, notes ->
+                                                viewModel.addBibleEntry(cat, name, role, desc, notes)
+                                            },
+                                            onDeleteBibleEntry = { id -> viewModel.deleteBibleEntry(id) },
+                                            onCompileStory = { format, callback ->
+                                                viewModel.compileStory(format, callback)
+                                            }
+                                        )
+                                    }
+                                    else -> {
+                                        StoryProjectsScreen(
+                                            stories = storyProjects,
+                                            onSelectStory = { id -> viewModel.selectStoryProject(id) },
+                                            onCreateStory = { title, genre, synopsis, words, color ->
+                                                viewModel.createStoryProject(title, genre, synopsis, words, color)
+                                            },
+                                            onDeleteStory = { id -> viewModel.deleteStoryProject(id) }
+                                        )
+                                    }
+                                }
+                            }
                             AppNavTab.PROJECTS -> {
                                 ProjectsScreen(
                                     projects = projects,

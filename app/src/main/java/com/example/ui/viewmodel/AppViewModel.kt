@@ -7,17 +7,23 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.model.CompilationRecordEntity
+import com.example.data.model.ChapterEntity
+import com.example.data.model.DailyWritingGoalEntity
 import com.example.data.model.DocumentItemEntity
 import com.example.data.model.ProjectEntity
+import com.example.data.model.StoryBibleEntity
 import com.example.data.model.SupportedFormat
 import com.example.data.repository.CompilationRepository
 import com.example.data.repository.DocumentRepository
 import com.example.data.repository.ProjectRepository
+import com.example.data.repository.StoryRepository
 import com.example.engine.DocxProcessor
 import com.example.engine.DocumentConverter
 import com.example.engine.DocumentMerger
+import com.example.engine.EditorialAnalysisResult
 import com.example.engine.FileStorageManager
 import com.example.engine.PdfExtractor
+import com.example.engine.StoryEditorialEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -36,6 +42,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val projectRepo = ProjectRepository(db.projectDao(), db.documentItemDao(), storageManager)
     private val documentRepo = DocumentRepository(db.documentItemDao(), storageManager)
     private val compilationRepo = CompilationRepository(db.compilationRecordDao(), storageManager)
+    val storyRepo = StoryRepository(db.projectDao(), db.chapterDao(), db.storyBibleDao(), db.dailyWritingGoalDao(), storageManager)
     private val documentMerger = DocumentMerger(application, storageManager)
     private val documentConverter = DocumentConverter(application, storageManager)
     private val docxProcessor = DocxProcessor()
@@ -506,6 +513,406 @@ Puntos Tratados:
         _previewText.value = null
         _previewBitmap.value?.recycle()
         _previewBitmap.value = null
+    }
+
+    // --- STORY & EDITORIAL SUITE STATE ---
+    val storyProjects: StateFlow<List<ProjectEntity>> = storyRepo.getStoryProjects()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _activeStoryProjectId = MutableStateFlow<Long?>(null)
+    val activeStoryProjectId: StateFlow<Long?> = _activeStoryProjectId.asStateFlow()
+
+    val activeStoryProject: StateFlow<ProjectEntity?> = combine(storyProjects, _activeStoryProjectId) { list, id ->
+        list.find { it.id == id }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    private val _chapterSearchQuery = MutableStateFlow("")
+    val chapterSearchQuery: StateFlow<String> = _chapterSearchQuery.asStateFlow()
+
+    private val _activeStoryChapters = MutableStateFlow<List<ChapterEntity>>(emptyList())
+    val activeStoryChapters: StateFlow<List<ChapterEntity>> = _activeStoryChapters.asStateFlow()
+
+    val filteredChapters: StateFlow<List<ChapterEntity>> = combine(_activeStoryChapters, _chapterSearchQuery) { chaps, query ->
+        if (query.isBlank()) chaps
+        else chaps.filter {
+            it.title.contains(query, ignoreCase = true) ||
+            it.content.contains(query, ignoreCase = true) ||
+            it.summary.contains(query, ignoreCase = true) ||
+            it.povCharacter.contains(query, ignoreCase = true)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _activeChapter = MutableStateFlow<ChapterEntity?>(null)
+    val activeChapter: StateFlow<ChapterEntity?> = _activeChapter.asStateFlow()
+
+    private val _chapterContent = MutableStateFlow("")
+    val chapterContent: StateFlow<String> = _chapterContent.asStateFlow()
+
+    private val _editorialAnalysis = MutableStateFlow(StoryEditorialEngine.analyze(""))
+    val editorialAnalysis: StateFlow<EditorialAnalysisResult> = _editorialAnalysis.asStateFlow()
+
+    private val _storyBibleEntries = MutableStateFlow<List<StoryBibleEntity>>(emptyList())
+    val storyBibleEntries: StateFlow<List<StoryBibleEntity>> = _storyBibleEntries.asStateFlow()
+
+    private val _bibleSearchQuery = MutableStateFlow("")
+    val bibleSearchQuery: StateFlow<String> = _bibleSearchQuery.asStateFlow()
+
+    val filteredBibleEntries: StateFlow<List<StoryBibleEntity>> = combine(_storyBibleEntries, _bibleSearchQuery) { entries, q ->
+        if (q.isBlank()) entries
+        else entries.filter {
+            it.name.contains(q, ignoreCase = true) ||
+            it.description.contains(q, ignoreCase = true) ||
+            it.roleOrLocation.contains(q, ignoreCase = true) ||
+            it.notes.contains(q, ignoreCase = true)
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _recentGoals = MutableStateFlow<List<DailyWritingGoalEntity>>(emptyList())
+    val recentGoals: StateFlow<List<DailyWritingGoalEntity>> = _recentGoals.asStateFlow()
+
+    fun selectStoryProject(projectId: Long?) {
+        _activeStoryProjectId.value = projectId
+        _activeChapter.value = null
+        _chapterContent.value = ""
+        _chapterSearchQuery.value = ""
+        if (projectId != null) {
+            viewModelScope.launch {
+                storyRepo.getChapters(projectId).collect { chaps ->
+                    _activeStoryChapters.value = chaps
+                }
+            }
+            viewModelScope.launch {
+                storyRepo.getBibleEntries(projectId).collect { entries ->
+                    _storyBibleEntries.value = entries
+                }
+            }
+            viewModelScope.launch {
+                storyRepo.getRecentGoals(projectId).collect { goals ->
+                    _recentGoals.value = goals
+                }
+            }
+        } else {
+            _activeStoryChapters.value = emptyList()
+            _storyBibleEntries.value = emptyList()
+        }
+    }
+
+    fun setChapterSearchQuery(query: String) {
+        _chapterSearchQuery.value = query
+    }
+
+    fun setBibleSearchQuery(query: String) {
+        _bibleSearchQuery.value = query
+    }
+
+    fun createStoryProject(title: String, genre: String, synopsis: String, targetWords: Int, colorHex: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val id = storyRepo.createStoryProject(title, genre, synopsis, targetWords, colorHex)
+            selectStoryProject(id)
+        }
+    }
+
+    fun updateStoryProject(project: ProjectEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.updateProject(project)
+        }
+    }
+
+    fun deleteStoryProject(projectId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.deleteStoryProject(projectId)
+            if (_activeStoryProjectId.value == projectId) {
+                selectStoryProject(null)
+            }
+        }
+    }
+
+    fun selectChapter(chapter: ChapterEntity?) {
+        _activeChapter.value = chapter
+        _chapterContent.value = chapter?.content ?: ""
+        _editorialAnalysis.value = StoryEditorialEngine.analyze(chapter?.content ?: "")
+    }
+
+    fun updateChapterContent(newContent: String) {
+        _chapterContent.value = newContent
+        _editorialAnalysis.value = StoryEditorialEngine.analyze(newContent)
+    }
+
+    fun saveActiveChapter() {
+        val chap = _activeChapter.value ?: return
+        val content = _chapterContent.value
+        viewModelScope.launch(Dispatchers.IO) {
+            val oldWords = chap.wordCount
+            val updated = chap.copy(content = content)
+            storyRepo.updateChapter(updated)
+            _activeChapter.value = updated
+            val newWords = updated.wordCount
+            if (newWords > oldWords) {
+                storyRepo.recordWritingProgress(chap.projectId, newWords - oldWords)
+            }
+        }
+    }
+
+    fun createChapter(
+        title: String,
+        summary: String = "",
+        pov: String = "",
+        targetWords: Int = 2000,
+        notes: String = ""
+    ) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            val id = storyRepo.createChapter(projId, title, "", summary, pov, targetWords, notes)
+            val newChap = storyRepo.getChapterById(id)
+            if (newChap != null) {
+                selectChapter(newChap)
+            }
+        }
+    }
+
+    fun updateChapterMetadata(chapter: ChapterEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.updateChapter(chapter)
+            if (_activeChapter.value?.id == chapter.id) {
+                _activeChapter.value = chapter
+            }
+        }
+    }
+
+    fun updateChapterDetails(
+        chapterId: Long,
+        title: String,
+        summary: String,
+        povCharacter: String,
+        targetWords: Int,
+        notes: String
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.updateChapterMetadata(chapterId, title, summary, povCharacter, targetWords, notes)
+            val updated = storyRepo.getChapterById(chapterId)
+            if (_activeChapter.value?.id == chapterId && updated != null) {
+                _activeChapter.value = updated
+            }
+        }
+    }
+
+    fun moveChapterUp(chapter: ChapterEntity) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.moveChapterUp(projId, chapter.id)
+        }
+    }
+
+    fun moveChapterDown(chapter: ChapterEntity) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.moveChapterDown(projId, chapter.id)
+        }
+    }
+
+    fun duplicateChapter(chapter: ChapterEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.duplicateChapter(chapter.id)
+        }
+    }
+
+    fun cycleChapterStatus(chapter: ChapterEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val updated = storyRepo.cycleChapterStatus(chapter)
+            if (_activeChapter.value?.id == chapter.id) {
+                _activeChapter.value = updated
+            }
+        }
+    }
+
+    fun deleteChapter(chapterId: Long) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.deleteChapter(chapterId, projId)
+            if (_activeChapter.value?.id == chapterId) {
+                selectChapter(null)
+            }
+        }
+    }
+
+    // Editorial Suite Quick Fixes
+    fun applyDialogueDashFix() {
+        val current = _chapterContent.value
+        val fixed = StoryEditorialEngine.fixDialogueDashes(current)
+        updateChapterContent(fixed)
+    }
+
+    fun applyFormattingWhitespaceFix() {
+        val current = _chapterContent.value
+        val fixed = StoryEditorialEngine.cleanFormattingWhitespace(current)
+        updateChapterContent(fixed)
+    }
+
+    fun applyOpeningPunctuationFix() {
+        val current = _chapterContent.value
+        val fixed = StoryEditorialEngine.fixOpeningPunctuation(current)
+        updateChapterContent(fixed)
+    }
+
+    // Story Bible (Characters, Places, Subplots)
+    fun addCharacter(
+        name: String,
+        role: String,
+        motivation: String,
+        appearance: String,
+        flawAndArc: String,
+        colorHex: String = "#8B5CF6"
+    ) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.insertBibleEntry(
+                StoryBibleEntity(
+                    projectId = projId,
+                    category = "PERSONAJE",
+                    name = name.trim(),
+                    roleOrLocation = role.trim(),
+                    description = motivation.trim(),
+                    appearanceOrDetails = appearance.trim(),
+                    notes = flawAndArc.trim(),
+                    status = "ACTIVO",
+                    colorHex = colorHex
+                )
+            )
+        }
+    }
+
+    fun addSetting(
+        name: String,
+        locationType: String,
+        atmosphere: String,
+        worldRules: String,
+        secrets: String,
+        colorHex: String = "#06B6D4"
+    ) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.insertBibleEntry(
+                StoryBibleEntity(
+                    projectId = projId,
+                    category = "ESCENARIO",
+                    name = name.trim(),
+                    roleOrLocation = locationType.trim(),
+                    description = atmosphere.trim(),
+                    appearanceOrDetails = worldRules.trim(),
+                    notes = secrets.trim(),
+                    status = "ACTIVO",
+                    colorHex = colorHex
+                )
+            )
+        }
+    }
+
+    fun addSubplot(
+        title: String,
+        subplotType: String,
+        conflictStakes: String,
+        charactersInvolved: String,
+        resolutionNotes: String,
+        status: String = "PLANTEADA",
+        colorHex: String = "#F59E0B"
+    ) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.insertBibleEntry(
+                StoryBibleEntity(
+                    projectId = projId,
+                    category = "TRAMA_SECUNDARIA",
+                    name = title.trim(),
+                    roleOrLocation = subplotType.trim(),
+                    description = conflictStakes.trim(),
+                    appearanceOrDetails = charactersInvolved.trim(),
+                    notes = resolutionNotes.trim(),
+                    status = status,
+                    colorHex = colorHex
+                )
+            )
+        }
+    }
+
+    fun addBibleEntry(
+        category: String,
+        name: String,
+        role: String,
+        desc: String,
+        notes: String,
+        details: String = "",
+        status: String = "EN_DESARROLLO",
+        colorHex: String = "#10B981"
+    ) {
+        val projId = _activeStoryProjectId.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.insertBibleEntry(
+                StoryBibleEntity(
+                    projectId = projId,
+                    category = category,
+                    name = name,
+                    roleOrLocation = role,
+                    description = desc,
+                    appearanceOrDetails = details,
+                    notes = notes,
+                    status = status,
+                    colorHex = colorHex
+                )
+            )
+        }
+    }
+
+    fun cycleSubplotStatus(entry: StoryBibleEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.cycleSubplotStatus(entry)
+        }
+    }
+
+    fun updateBibleEntry(entry: StoryBibleEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.updateBibleEntry(entry)
+        }
+    }
+
+    fun deleteBibleEntry(id: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            storyRepo.deleteBibleEntry(id)
+        }
+    }
+
+    // Export / Compile Story
+    fun compileStory(format: SupportedFormat, onResult: (File) -> Unit) {
+        val proj = activeStoryProject.value ?: return
+        val chapters = _activeStoryChapters.value
+        viewModelScope.launch(Dispatchers.IO) {
+            val text = storyRepo.buildBookManuscriptText(proj, chapters, format)
+            val ext = when (format) {
+                SupportedFormat.MD -> "md"
+                SupportedFormat.JSON -> "json"
+                else -> "txt"
+            }
+            val safeName = proj.name.replace(Regex("[^a-zA-Z0-9_-]"), "_")
+            val file = storageManager.createCompilationFile("historia_${safeName}_completa.$ext")
+            file.writeText(text, Charsets.UTF_8)
+            val relative = "compilations/${file.name}"
+            val checksum = storageManager.calculateSha256(file)
+
+            compilationRepo.saveCompilationRecord(
+                projectId = proj.id,
+                projectName = proj.name,
+                title = "Novela Completa: ${proj.name}",
+                outputFileName = file.name,
+                outputFormat = ext,
+                relativeFilePath = relative,
+                fileSizeBytes = file.length(),
+                sha256Checksum = checksum,
+                sourceItemCount = chapters.size
+            )
+
+            withContext(Dispatchers.Main) {
+                onResult(file)
+            }
+        }
     }
 
     fun deleteCompilationRecord(id: Long) {

@@ -49,6 +49,7 @@ class AppBaseScaffoldTest {
 
         // Verify NavigationBar and all tabs
         composeTestRule.onNodeWithTag("main_navigation_bar").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("tab_stories").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tab_projects").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tab_explorer").assertIsDisplayed()
         composeTestRule.onNodeWithTag("tab_compiler").assertIsDisplayed()
