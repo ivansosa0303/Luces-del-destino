@@ -29,7 +29,10 @@ import androidx.compose.material.icons.filled.OfflineBolt
 import androidx.compose.material.icons.filled.Source
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.IconButton
+import com.example.ui.components.AppBaseScaffold
 import com.example.ui.components.CloudSyncDialog
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -92,6 +95,17 @@ class MainActivity : ComponentActivity() {
             viewModel.authManager.attemptAutoSignIn(this)
         }
 
+        intent?.let { incomingIntent ->
+            if (incomingIntent.action in listOf(
+                    android.content.Intent.ACTION_SEND,
+                    android.content.Intent.ACTION_SEND_MULTIPLE,
+                    android.content.Intent.ACTION_VIEW
+                )
+            ) {
+                viewModel.handleIncomingIntent(incomingIntent)
+            }
+        }
+
         setContent {
             MyApplicationTheme {
                 val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
@@ -129,121 +143,35 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                Scaffold(
-                    modifier = Modifier.fillMaxSize(),
-                    contentWindowInsets = WindowInsets.systemBars,
-                    topBar = {
-                        CenterAlignedTopAppBar(
-                            title = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = "DocMerge",
-                                        fontWeight = FontWeight.Black,
-                                        fontSize = 18.sp,
-                                        letterSpacing = (-0.5).sp
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(Color(0xFF10B981).copy(alpha = 0.15f))
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.OfflineBolt,
-                                                contentDescription = null,
-                                                tint = Color(0xFF059669),
-                                                modifier = Modifier.size(12.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(3.dp))
-                                            Text(
-                                                text = "OFFLINE",
-                                                color = Color(0xFF047857),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                letterSpacing = 0.5.sp
-                                            )
-                                        }
-                                    }
-                                }
-                            },
-                            actions = {
-                                IconButton(
-                                    onClick = { showCloudDialog = true },
-                                    modifier = Modifier.testTag("btn_cloud_sync_topbar")
-                                ) {
-                                    if (currentUser != null) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(32.dp)
-                                                .clip(CircleShape)
-                                                .background(MaterialTheme.colorScheme.primary),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = (currentUser?.displayName?.take(1) ?: currentUser?.email?.take(1) ?: "G").uppercase(),
-                                                color = MaterialTheme.colorScheme.onPrimary,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp
-                                            )
-                                        }
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.CloudQueue,
-                                            contentDescription = "Sincronización en la Nube",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            },
-                            colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                                containerColor = MaterialTheme.colorScheme.surface
-                            )
-                        )
-                    },
-                    bottomBar = {
-                        NavigationBar(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                            tonalElevation = 4.dp
-                        ) {
-                            AppNavTab.entries.forEach { tab ->
-                                val selected = currentTab == tab
-                                NavigationBarItem(
-                                    selected = selected,
-                                    onClick = { currentTab = tab },
-                                    label = {
-                                        Text(
-                                            text = tab.title,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                                        )
-                                    },
-                                    icon = {
-                                        if (tab == AppNavTab.COMPILER && selectedDocIds.isNotEmpty()) {
-                                            BadgedBox(
-                                                badge = {
-                                                    Badge {
-                                                        Text(selectedDocIds.size.toString())
-                                                    }
-                                                }
-                                            ) {
-                                                Icon(imageVector = tab.icon, contentDescription = tab.title)
-                                            }
-                                        } else {
-                                            Icon(imageVector = tab.icon, contentDescription = tab.title)
-                                        }
-                                    },
-                                    modifier = Modifier.testTag(tab.testTag),
-                                    colors = NavigationBarItemDefaults.colors(
-                                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                                        indicatorColor = MaterialTheme.colorScheme.primaryContainer
-                                    )
-                                )
-                            }
+                val snackbarHostState = remember { SnackbarHostState() }
+                val selectedProjectName = projects.firstOrNull { it.id == selectedProjectId }?.name
+
+                LaunchedEffect(compilationMessage) {
+                    compilationMessage?.let { msg ->
+                        snackbarHostState.showSnackbar(msg)
+                    }
+                }
+
+                val canNavigateBack = previewDoc != null || selectedProjectId != null || currentTab != AppNavTab.EXPLORER
+                val onNavigateBackAction: (() -> Unit)? = if (canNavigateBack) {
+                    {
+                        when {
+                            previewDoc != null -> viewModel.closeDocumentPreview()
+                            selectedProjectId != null -> viewModel.selectProject(null)
+                            currentTab != AppNavTab.EXPLORER -> currentTab = AppNavTab.EXPLORER
                         }
                     }
+                } else null
+
+                AppBaseScaffold(
+                    currentTab = currentTab,
+                    onTabSelected = { tab -> currentTab = tab },
+                    selectedProjectName = selectedProjectName,
+                    onNavigateBack = onNavigateBackAction,
+                    currentUser = currentUser,
+                    onOpenCloudSync = { showCloudDialog = true },
+                    compilerBadgeCount = selectedDocIds.size,
+                    snackbarHostState = snackbarHostState
                 ) { innerPadding ->
                     Box(
                         modifier = Modifier
@@ -325,6 +253,7 @@ class MainActivity : ComponentActivity() {
                                     isConverting = isConverting,
                                     conversionResult = conversionResult,
                                     onSelectFile = { doc -> viewModel.setConverterSelectedFile(doc) },
+                                    onSelectFileUri = { uri -> viewModel.importAndSelectForConversion(uri) },
                                     onSelectTargetFormat = { fmt -> viewModel.setConverterTargetFormat(fmt) },
                                     onConvert = { viewModel.runDirectConversion() },
                                     storageManager = viewModel.storageManager
@@ -376,5 +305,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel.handleIncomingIntent(intent)
     }
 }

@@ -85,6 +85,42 @@ class DocumentRepository(
         return documentItemDao.insertDocument(doc)
     }
 
+    suspend fun importFromIncomingResult(
+        result: com.example.service.IncomingFileResult,
+        projectId: Long = 0,
+        title: String = result.fileName.substringBeforeLast(".")
+    ): Long {
+        if (!result.isValid || result.stagedFile == null || !result.stagedFile.exists()) {
+            return 0L
+        }
+        val (file, sha256) = storageManager.saveStagedFileToDocument(
+            stagedFile = result.stagedFile,
+            originalFileName = result.fileName,
+            precalculatedSha256 = result.sha256Checksum
+        )
+        val ext = result.extension.lowercase()
+        val relativePath = "documents/${file.name}"
+        val preview = result.textPreview.ifBlank {
+            when (ext) {
+                "txt", "md", "json" -> storageManager.readTextSafely(file).take(500)
+                else -> ""
+            }
+        }
+
+        val doc = DocumentItemEntity(
+            projectId = projectId,
+            title = title,
+            fileName = result.fileName,
+            extension = ext,
+            mimeType = result.mimeType.ifBlank { getMimeType(ext) },
+            relativeFilePath = relativePath,
+            fileSizeBytes = file.length(),
+            sha256Checksum = sha256,
+            textSummaryOrPreview = preview
+        )
+        return documentItemDao.insertDocument(doc)
+    }
+
     suspend fun createTextDocument(
         title: String,
         content: String,

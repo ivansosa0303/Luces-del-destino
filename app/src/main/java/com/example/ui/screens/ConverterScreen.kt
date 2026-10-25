@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FileOpen
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Transform
@@ -81,6 +84,7 @@ fun ConverterScreen(
     isConverting: Boolean,
     conversionResult: DocumentConverter.ConversionResult?,
     onSelectFile: (DocumentItemEntity?) -> Unit,
+    onSelectFileUri: (android.net.Uri) -> Unit = {},
     onSelectTargetFormat: (SupportedFormat) -> Unit,
     onConvert: () -> Unit,
     storageManager: FileStorageManager,
@@ -89,6 +93,14 @@ fun ConverterScreen(
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
     var fileDropdownExpanded by remember { mutableStateOf(false) }
+
+    val storagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            onSelectFileUri(uri)
+        }
+    }
 
     val srcFormat = selectedFile?.let { SupportedFormat.fromExtension(it.extension) }
 
@@ -166,9 +178,54 @@ fun ConverterScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
+                    // Direct ContentResolver Storage Picker
+                    Button(
+                        onClick = {
+                            storagePickerLauncher.launch(
+                                arrayOf(
+                                    "text/*",
+                                    "application/pdf",
+                                    "application/json",
+                                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    "image/*",
+                                    "*/*"
+                                )
+                            )
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("btn_select_from_storage_for_conversion"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FileOpen,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Seleccionar archivo del dispositivo")
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f))
+                        Text(
+                            text = "  o seleccionar de la memoria local  ",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        androidx.compose.material3.HorizontalDivider(modifier = Modifier.weight(1f))
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     if (documents.isEmpty()) {
                         Text(
-                            text = "No hay archivos disponibles en la memoria. Importa o crea uno en el Explorador.",
+                            text = "No hay archivos cargados aún. Usa el botón superior para seleccionar uno del dispositivo.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -178,7 +235,7 @@ fun ConverterScreen(
                             onExpandedChange = { fileDropdownExpanded = it }
                         ) {
                             OutlinedTextField(
-                                value = selectedFile?.fileName ?: "Selecciona un archivo...",
+                                value = selectedFile?.fileName ?: "Selecciona un archivo existente...",
                                 onValueChange = {},
                                 readOnly = true,
                                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fileDropdownExpanded) },

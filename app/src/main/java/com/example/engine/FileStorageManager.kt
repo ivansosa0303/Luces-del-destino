@@ -58,6 +58,15 @@ class FileStorageManager(private val context: Context) {
         return Pair(destFile, sha256)
     }
 
+    fun saveStagedFileToDocument(stagedFile: File, originalFileName: String, precalculatedSha256: String? = null): Pair<File, String> {
+        val sanitized = sanitizeFileName(originalFileName)
+        val uniqueName = "${UUID.randomUUID().toString().take(8)}_$sanitized"
+        val destFile = File(documentsDir, uniqueName)
+        stagedFile.copyTo(destFile, overwrite = true)
+        val sha256 = precalculatedSha256?.ifBlank { null } ?: calculateSha256(destFile)
+        return Pair(destFile, sha256)
+    }
+
     fun createCompilationFile(fileName: String): File {
         val sanitized = sanitizeFileName(fileName)
         return File(compilationsDir, sanitized)

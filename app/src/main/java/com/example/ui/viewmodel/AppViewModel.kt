@@ -40,6 +40,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val documentConverter = DocumentConverter(application, storageManager)
     private val docxProcessor = DocxProcessor()
     private val pdfExtractor = PdfExtractor()
+    val uriFileResolverService: com.example.service.UriFileResolverService =
+        com.example.service.DefaultUriFileResolverService(application, storageManager)
 
     val authManager = com.example.firebase.AuthManager(application)
     val syncRepository = com.example.firebase.FirestoreSyncRepository(application)
@@ -220,34 +222,62 @@ Puntos Tratados:
         _formatFilter.value = format
     }
 
-    // Document Import & Creation
+    // Document Import & Creation via ContentResolver & UriFileResolverService
     fun importFiles(uris: List<Uri>) {
         viewModelScope.launch(Dispatchers.IO) {
-            val context = getApplication<Application>()
             val currentProjectId = _selectedProjectId.value ?: 0L
+            val resolvedResults = uriFileResolverService.resolveUris(uris)
+            for (result in resolvedResults) {
+                if (result.isValid) {
+                    try {
+                        documentRepo.importFromIncomingResult(result, currentProjectId)
+                    } catch (e: Exception) {
+                        android.util.Log.e("AppViewModel", "Error al importar archivo resuelto: ${e.message}", e)
+                    }
+                }
+            }
+        }
+    }
 
-            for (uri in uris) {
-                try {
-                    val contentResolver = context.contentResolver
-                    var displayName = "documento"
-                    contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                        if (cursor.moveToFirst()) {
-                            val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                            if (nameIndex >= 0) {
-                                displayName = cursor.getString(nameIndex) ?: displayName
-                            }
+    fun importAndSelectForConversion(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _isConverting.value = true
+            try {
+                val result = uriFileResolverService.resolveUri(uri)
+                if (result.isValid) {
+                    val currentProjectId = _selectedProjectId.value ?: 0L
+                    val docId = documentRepo.importFromIncomingResult(result, currentProjectId)
+                    val doc = documentRepo.getDocumentById(docId)
+                    if (doc != null) {
+                        withContext(Dispatchers.Main) {
+                            setConverterSelectedFile(doc)
                         }
                     }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("AppViewModel", "Error al resolver archivo para conversión: ${e.message}", e)
+            } finally {
+                _isConverting.value = false
+            }
+        }
+    }
 
-                    contentResolver.openInputStream(uri)?.use { stream ->
-                        documentRepo.importDocumentFromStream(
-                            inputStream = stream,
-                            originalFileName = displayName,
-                            projectId = currentProjectId
-                        )
+    fun handleIncomingIntent(intent: android.content.Intent) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val results = uriFileResolverService.resolveIntent(intent)
+            val currentProjectId = _selectedProjectId.value ?: 0L
+            var firstImportedDoc: DocumentItemEntity? = null
+            for (result in results) {
+                if (result.isValid) {
+                    val docId = documentRepo.importFromIncomingResult(result, currentProjectId)
+                    if (firstImportedDoc == null) {
+                        firstImportedDoc = documentRepo.getDocumentById(docId)
                     }
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                }
+            }
+            if (firstImportedDoc != null) {
+                withContext(Dispatchers.Main) {
+                    setConverterSelectedFile(firstImportedDoc)
                 }
             }
         }
