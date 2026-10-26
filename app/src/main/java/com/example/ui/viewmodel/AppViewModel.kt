@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
+import com.example.data.backup.ImportSummary
 import com.example.data.model.CompilationRecordEntity
 import com.example.data.model.ChapterEntity
 import com.example.data.model.DailyWritingGoalEntity
@@ -24,20 +25,31 @@ import com.example.engine.EditorialAnalysisResult
 import com.example.engine.FileStorageManager
 import com.example.engine.PdfExtractor
 import com.example.engine.StoryEditorialEngine
+import com.example.engine.StoryExporter
+import com.example.engine.TextMetrics
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
+    private val prefs = application.getSharedPreferences("luces_session", android.content.Context.MODE_PRIVATE)
     val storageManager = FileStorageManager(application)
     private val projectRepo = ProjectRepository(db.projectDao(), db.documentItemDao(), storageManager)
     private val documentRepo = DocumentRepository(db.documentItemDao(), storageManager)
@@ -114,6 +126,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         seedSampleDataIfFirstRun()
+        restoreLastSession()
+        startPeriodicAutosave()
+    }
+
+    /**
+     * Red de seguridad del autoguardado.
+     *
+     * El guardado por rebote (2,5 s) no dispara mientras el usuario escribe sin
+     * pausar; este ciclo guarda cada 15 s si hay cambios pendientes, así una
+     * sesión larga nunca queda a merced de un cierre inesperado.
+     */
+    private fun startPeriodicAutosave() {
+        viewModelScope.launch {
+            while (true) {
+                delay(15_000)
+                val chapter = _activeChapter.value ?: continue
+                val content = _chapterContent.value
+                if (content != chapter.content) {
+                    persistChapter(chapter.id, content)
+                }
+            }
+        }
     }
 
     private fun seedSampleDataIfFirstRun() {
@@ -519,6 +553,10 @@ Puntos Tratados:
     val storyProjects: StateFlow<List<ProjectEntity>> = storyRepo.getStoryProjects()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val chapterCounts: StateFlow<Map<Long, Int>> = storyRepo.getChapterCounts()
+        .map { counts -> counts.associate { it.projectId to it.chapterCount } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
     private val _activeStoryProjectId = MutableStateFlow<Long?>(null)
     val activeStoryProjectId: StateFlow<Long?> = _activeStoryProjectId.asStateFlow()
 
@@ -551,6 +589,31 @@ Puntos Tratados:
     private val _editorialAnalysis = MutableStateFlow(StoryEditorialEngine.analyze(""))
     val editorialAnalysis: StateFlow<EditorialAnalysisResult> = _editorialAnalysis.asStateFlow()
 
+    // --- Autoguardado ---
+    private var autosaveJob: Job? = null
+    private var analysisJob: Job? = null
+    private val saveMutex = Mutex()
+
+    private val _saveStatus = MutableStateFlow<String?>(null)
+    val saveStatus: StateFlow<String?> = _saveStatus.asStateFlow()
+
+    // --- Deshacer / rehacer ---
+    private val undoStack = ArrayDeque<String>()
+    private val redoStack = ArrayDeque<String>()
+    private var lastUndoSnapshotAt = 0L
+
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+
+    // Colectores de la novela activa: se cancelan al cambiar de novela para no
+    // acumular observadores duplicados en cada navegación.
+    private var chaptersJob: Job? = null
+    private var bibleJob: Job? = null
+    private var goalsJob: Job? = null
+
     private val _storyBibleEntries = MutableStateFlow<List<StoryBibleEntity>>(emptyList())
     val storyBibleEntries: StateFlow<List<StoryBibleEntity>> = _storyBibleEntries.asStateFlow()
 
@@ -575,25 +638,58 @@ Puntos Tratados:
         _activeChapter.value = null
         _chapterContent.value = ""
         _chapterSearchQuery.value = ""
+        _bibleSearchQuery.value = ""
         if (projectId != null) {
-            viewModelScope.launch {
-                storyRepo.getChapters(projectId).collect { chaps ->
-                    _activeStoryChapters.value = chaps
-                }
-            }
-            viewModelScope.launch {
-                storyRepo.getBibleEntries(projectId).collect { entries ->
-                    _storyBibleEntries.value = entries
-                }
-            }
-            viewModelScope.launch {
-                storyRepo.getRecentGoals(projectId).collect { goals ->
-                    _recentGoals.value = goals
-                }
-            }
+            collectStoryData(projectId)
         } else {
+            chaptersJob?.cancel()
+            bibleJob?.cancel()
+            goalsJob?.cancel()
             _activeStoryChapters.value = emptyList()
             _storyBibleEntries.value = emptyList()
+            _recentGoals.value = emptyList()
+        }
+    }
+
+    private fun collectStoryData(projectId: Long) {
+        chaptersJob?.cancel()
+        bibleJob?.cancel()
+        goalsJob?.cancel()
+        chaptersJob = viewModelScope.launch {
+            storyRepo.getChapters(projectId).collect { _activeStoryChapters.value = it }
+        }
+        bibleJob = viewModelScope.launch {
+            storyRepo.getBibleEntries(projectId).collect { _storyBibleEntries.value = it }
+        }
+        goalsJob = viewModelScope.launch {
+            storyRepo.getRecentGoals(projectId).collect { _recentGoals.value = it }
+        }
+    }
+
+    private fun rememberLastSession(projectId: Long, chapterId: Long) {
+        prefs.edit()
+            .putLong("last_project", projectId)
+            .putLong("last_chapter", chapterId)
+            .apply()
+    }
+
+    /**
+     * Reabre el último capítulo en el que estaba trabajando el usuario.
+     * Antes, cerrar la app devolvía siempre a la lista de novelas.
+     */
+    private fun restoreLastSession() {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (_activeStoryProjectId.value != null) return@launch
+            val projectId = prefs.getLong("last_project", 0L)
+            val chapterId = prefs.getLong("last_chapter", 0L)
+            if (projectId == 0L || chapterId == 0L) return@launch
+            val project = storyRepo.getProjectById(projectId) ?: return@launch
+            val chapter = storyRepo.getChapterById(chapterId) ?: return@launch
+            withContext(Dispatchers.Main) {
+                _activeStoryProjectId.value = project.id
+                collectStoryData(project.id)
+                selectChapter(chapter)
+            }
         }
     }
 
@@ -628,27 +724,130 @@ Puntos Tratados:
     }
 
     fun selectChapter(chapter: ChapterEntity?) {
+        // Red de seguridad: si se cambia de capítulo con texto pendiente de
+        // autoguardado, se guarda antes de reemplazar el contenido en memoria.
+        if (chapter != null && chapter.id != _activeChapter.value?.id) {
+            flushActiveChapter()
+        }
         _activeChapter.value = chapter
         _chapterContent.value = chapter?.content ?: ""
-        _editorialAnalysis.value = StoryEditorialEngine.analyze(chapter?.content ?: "")
+        // El análisis de un capítulo largo puede tardar; se calcula fuera del
+        // hilo principal en vez de bloquear la apertura del editor.
+        _editorialAnalysis.value = StoryEditorialEngine.analyze("")
+        undoStack.clear()
+        redoStack.clear()
+        _canUndo.value = false
+        _canRedo.value = false
+        _saveStatus.value = null
+        if (chapter != null) {
+            rememberLastSession(chapter.projectId, chapter.id)
+            scheduleAnalysis(chapter.content)
+        }
     }
 
     fun updateChapterContent(newContent: String) {
+        val previous = _chapterContent.value
+        if (previous == newContent) return
+        // Cualquier edición invalida la pila de rehacer, incluso si el
+        // snapshot se agrupa por la ventana de 600 ms.
+        redoStack.clear()
+        _canRedo.value = false
+        pushUndoSnapshot(previous)
         _chapterContent.value = newContent
-        _editorialAnalysis.value = StoryEditorialEngine.analyze(newContent)
+        _saveStatus.value = "Cambios sin guardar"
+        scheduleAnalysis(newContent)
+        scheduleAutosave()
+    }
+
+    // --- Deshacer / rehacer ---
+
+    private fun pushUndoSnapshot(previous: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastUndoSnapshotAt < 600L) return
+        lastUndoSnapshotAt = now
+        undoStack.addLast(previous)
+        while (undoStack.size > 60) undoStack.removeFirst()
+        _canUndo.value = true
+    }
+
+    fun undo() {
+        if (undoStack.isEmpty()) return
+        val current = _chapterContent.value
+        val restored = undoStack.removeLast()
+        redoStack.addLast(current)
+        _chapterContent.value = restored
+        _canUndo.value = undoStack.isNotEmpty()
+        _canRedo.value = true
+        _saveStatus.value = "Cambios sin guardar"
+        scheduleAnalysis(restored)
+        scheduleAutosave()
+    }
+
+    fun redo() {
+        if (redoStack.isEmpty()) return
+        val current = _chapterContent.value
+        val restored = redoStack.removeLast()
+        undoStack.addLast(current)
+        _chapterContent.value = restored
+        _canRedo.value = redoStack.isNotEmpty()
+        _canUndo.value = true
+        _saveStatus.value = "Cambios sin guardar"
+        scheduleAnalysis(restored)
+        scheduleAutosave()
+    }
+
+    // --- Análisis editorial (fuera del hilo principal y con retardo) ---
+
+    private fun scheduleAnalysis(text: String) {
+        analysisJob?.cancel()
+        analysisJob = viewModelScope.launch {
+            delay(450)
+            val result = withContext(Dispatchers.Default) { StoryEditorialEngine.analyze(text) }
+            _editorialAnalysis.value = result
+        }
+    }
+
+    // --- Autoguardado ---
+
+    private fun scheduleAutosave() {
+        autosaveJob?.cancel()
+        val chapterId = _activeChapter.value?.id ?: return
+        val content = _chapterContent.value
+        autosaveJob = viewModelScope.launch {
+            delay(2500)
+            persistChapter(chapterId, content)
+        }
     }
 
     fun saveActiveChapter() {
-        val chap = _activeChapter.value ?: return
+        autosaveJob?.cancel()
+        val chapterId = _activeChapter.value?.id ?: return
+        // El contenido se captura AQUÍ, de forma síncrona. Antes se leía dentro
+        // de la corrutina, y al navegar fuera del editor podía guardar "".
         val content = _chapterContent.value
-        viewModelScope.launch(Dispatchers.IO) {
-            val oldWords = chap.wordCount
-            val updated = chap.copy(content = content)
-            storyRepo.updateChapter(updated)
-            _activeChapter.value = updated
-            val newWords = updated.wordCount
-            if (newWords > oldWords) {
-                storyRepo.recordWritingProgress(chap.projectId, newWords - oldWords)
+        viewModelScope.launch { persistChapter(chapterId, content) }
+    }
+
+    /** Guardado inmediato al salir a segundo plano o al navegar fuera del editor. */
+    fun flushActiveChapter() {
+        autosaveJob?.cancel()
+        val chapterId = _activeChapter.value?.id ?: return
+        val content = _chapterContent.value
+        viewModelScope.launch(Dispatchers.IO) { persistChapter(chapterId, content) }
+    }
+
+    private suspend fun persistChapter(chapterId: Long, content: String) {
+        saveMutex.withLock {
+            _saveStatus.value = "Guardando…"
+            val updated = storyRepo.saveChapterContent(chapterId, content)
+            if (updated != null) {
+                if (_activeChapter.value?.id == updated.id) {
+                    _activeChapter.value = updated
+                }
+                val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+                _saveStatus.value = "Guardado a las $time"
+            } else {
+                _saveStatus.value = "No se pudo guardar"
             }
         }
     }
@@ -672,9 +871,9 @@ Puntos Tratados:
 
     fun updateChapterMetadata(chapter: ChapterEntity) {
         viewModelScope.launch(Dispatchers.IO) {
-            storyRepo.updateChapter(chapter)
+            storyRepo.updateChapterStatus(chapter.id, chapter.status)
             if (_activeChapter.value?.id == chapter.id) {
-                _activeChapter.value = chapter
+                _activeChapter.value = _activeChapter.value?.copy(status = chapter.status)
             }
         }
     }
@@ -728,10 +927,18 @@ Puntos Tratados:
     fun deleteChapter(chapterId: Long) {
         val projId = _activeStoryProjectId.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            storyRepo.deleteChapter(chapterId, projId)
             if (_activeChapter.value?.id == chapterId) {
-                selectChapter(null)
+                // Se limpia antes de borrar para que ningún guardado pendiente
+                // intente reescribir un capítulo que ya no existe.
+                _activeChapter.value = null
+                _chapterContent.value = ""
+                _saveStatus.value = null
+                undoStack.clear()
+                redoStack.clear()
+                _canUndo.value = false
+                _canRedo.value = false
             }
+            storyRepo.deleteChapter(chapterId, projId)
         }
     }
 
@@ -881,19 +1088,44 @@ Puntos Tratados:
     }
 
     // Export / Compile Story
-    fun compileStory(format: SupportedFormat, onResult: (File) -> Unit) {
+    fun compileStory(
+        format: SupportedFormat,
+        onResult: (File) -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
         val proj = activeStoryProject.value ?: return
-        val chapters = _activeStoryChapters.value
         viewModelScope.launch(Dispatchers.IO) {
-            val text = storyRepo.buildBookManuscriptText(proj, chapters, format)
+            // Nunca exportar con cambios del editor sin guardar.
+            _activeChapter.value?.let { persistChapter(it.id, _chapterContent.value) }
+            val chapters = _activeStoryChapters.value
+
             val ext = when (format) {
                 SupportedFormat.MD -> "md"
                 SupportedFormat.JSON -> "json"
+                SupportedFormat.PDF -> "pdf"
+                SupportedFormat.DOCX -> "docx"
                 else -> "txt"
             }
             val safeName = proj.name.replace(Regex("[^a-zA-Z0-9_-]"), "_")
             val file = storageManager.createCompilationFile("historia_${safeName}_completa.$ext")
-            file.writeText(text, Charsets.UTF_8)
+
+            val ok = when (format) {
+                SupportedFormat.PDF -> StoryExporter().exportPdf(file, proj, chapters)
+                SupportedFormat.DOCX -> StoryExporter().exportDocx(file, proj, chapters)
+                else -> {
+                    val text = storyRepo.buildBookManuscriptText(proj, chapters, format)
+                    file.writeText(text, Charsets.UTF_8)
+                    true
+                }
+            }
+
+            if (!ok) {
+                withContext(Dispatchers.Main) {
+                    onError("No se pudo generar el archivo ${format.displayName}.")
+                }
+                return@launch
+            }
+
             val relative = "compilations/${file.name}"
             val checksum = storageManager.calculateSha256(file)
 
@@ -915,10 +1147,56 @@ Puntos Tratados:
         }
     }
 
+    // --- Copia de seguridad completa ---
+
+    fun exportBackup(onResult: (File) -> Unit, onError: (String) -> Unit = {}) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                _activeChapter.value?.let { persistChapter(it.id, _chapterContent.value) }
+                val json = storyRepo.exportBackupJson()
+                val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.getDefault()).format(Date())
+                val file = storageManager.createCompilationFile("respaldo_novelas_$stamp.json")
+                file.writeText(json, Charsets.UTF_8)
+                withContext(Dispatchers.Main) { onResult(file) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError(e.message ?: "No se pudo crear el respaldo.")
+                }
+            }
+        }
+    }
+
+    fun importBackup(
+        uri: android.net.Uri,
+        onResult: (ImportSummary) -> Unit,
+        onError: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val text = getApplication<Application>().contentResolver
+                    .openInputStream(uri)
+                    ?.use { it.readBytes().toString(Charsets.UTF_8) }
+                    ?: throw IllegalArgumentException("No se pudo leer el archivo seleccionado.")
+
+                val summary = storyRepo.importBackupJson(text)
+                withContext(Dispatchers.Main) { onResult(summary) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onError(e.message ?: "El archivo no es un respaldo válido.")
+                }
+            }
+        }
+    }
+
     fun deleteCompilationRecord(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
             compilationRepo.deleteCompilation(id)
         }
+    }
+
+    /** Mensaje puntual para la snackbar global. */
+    fun showMessage(message: String) {
+        _compilationMessage.value = message
     }
 
     suspend fun syncWithFirestore(): Int {

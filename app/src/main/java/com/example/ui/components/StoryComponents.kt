@@ -858,12 +858,13 @@ fun SubplotProfileCard(
 fun BibleEntryItemCard(
     entry: StoryBibleEntity,
     onDelete: () -> Unit,
+    onCycleStatus: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     when (entry.category) {
         "PERSONAJE" -> CharacterProfileCard(character = entry, onDelete = onDelete, modifier = modifier)
         "ESCENARIO" -> SettingProfileCard(setting = entry, onDelete = onDelete, modifier = modifier)
-        "TRAMA_SECUNDARIA" -> SubplotProfileCard(subplot = entry, onDelete = onDelete, onCycleStatus = {}, modifier = modifier)
+        "TRAMA_SECUNDARIA" -> SubplotProfileCard(subplot = entry, onDelete = onDelete, onCycleStatus = onCycleStatus, modifier = modifier)
         else -> {
             Card(
                 modifier = modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)),
@@ -1358,4 +1359,219 @@ fun CreateBibleEntryDialog(
             }
         )
     }
+}
+
+/**
+ * Diálogo de creación de una novela.
+ *
+ * Faltaba por completo: [StoryProjectsScreen] lo importaba y el proyecto no
+ * compilaba. Incluye género, sinopsis, meta de palabras y color identificador.
+ */
+@Composable
+fun CreateStoryDialog(
+    onDismiss: () -> Unit,
+    onCreate: (title: String, genre: String, synopsis: String, targetWords: Int, colorHex: String) -> Unit
+) {
+    val genres = listOf("Fantasía", "Ciencia Ficción", "Romance", "Novela Negra", "Histórico", "Thriller", "Juvenil")
+    val targets = listOf(50000, 80000, 100000, 120000)
+    val palette = listOf("#10B981", "#38BDF8", "#8B5CF6", "#F59E0B", "#F43F5E", "#14B8A6")
+
+    var title by remember { mutableStateOf("") }
+    var genre by remember { mutableStateOf(genres[0]) }
+    var synopsis by remember { mutableStateOf("") }
+    var targetWords by remember { mutableIntStateOf(80000) }
+    var colorHex by remember { mutableStateOf(palette[0]) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nueva Novela") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    label = { Text("Título de la obra") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("story_title_input")
+                )
+
+                OutlinedTextField(
+                    value = synopsis,
+                    onValueChange = { synopsis = it },
+                    label = { Text("Sinopsis o premisa (opcional)") },
+                    modifier = Modifier.fillMaxWidth().height(96.dp).testTag("story_synopsis_input")
+                )
+
+                Text("Género:", style = MaterialTheme.typography.labelSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    genres.take(4).forEach { g ->
+                        FilterChip(
+                            selected = genre == g,
+                            onClick = { genre = g },
+                            label = { Text(g, fontSize = 10.sp) }
+                        )
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    genres.drop(4).forEach { g ->
+                        FilterChip(
+                            selected = genre == g,
+                            onClick = { genre = g },
+                            label = { Text(g, fontSize = 10.sp) }
+                        )
+                    }
+                }
+
+                Text("Meta de palabras:", style = MaterialTheme.typography.labelSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    targets.forEach { t ->
+                        FilterChip(
+                            selected = targetWords == t,
+                            onClick = { targetWords = t },
+                            label = { Text("${t / 1000}k", fontSize = 10.sp) }
+                        )
+                    }
+                }
+
+                Text("Color identificador:", style = MaterialTheme.typography.labelSmall)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    palette.forEach { hex ->
+                        val color = Color(android.graphics.Color.parseColor(hex))
+                        Box(
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                                .border(
+                                    width = if (colorHex == hex) 2.dp else 0.dp,
+                                    color = if (colorHex == hex) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                    shape = CircleShape
+                                )
+                                .clickable { colorHex = hex }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (title.isNotBlank()) {
+                        onCreate(title.trim(), genre, synopsis.trim(), targetWords, colorHex)
+                        onDismiss()
+                    }
+                },
+                enabled = title.isNotBlank(),
+                modifier = Modifier.testTag("confirm_create_story")
+            ) {
+                Text("Crear Novela")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
+}
+
+/**
+ * Edición de una ficha narrativa existente.
+ *
+ * El ViewModel ya tenía `updateBibleEntry`, pero ninguna pantalla lo llamaba:
+ * las fichas solo se podían crear y borrar.
+ */
+@Composable
+fun EditBibleEntryDialog(
+    entry: StoryBibleEntity,
+    onDismiss: () -> Unit,
+    onSave: (name: String, role: String, description: String, details: String, notes: String, status: String) -> Unit
+) {
+    var name by remember { mutableStateOf(entry.name) }
+    var role by remember { mutableStateOf(entry.roleOrLocation) }
+    var description by remember { mutableStateOf(entry.description) }
+    var details by remember { mutableStateOf(entry.appearanceOrDetails) }
+    var notes by remember { mutableStateOf(entry.notes) }
+    var status by remember { mutableStateOf(entry.status) }
+
+    val (roleLabel, descLabel, detailsLabel, notesLabel) = when (entry.category) {
+        "PERSONAJE" -> listOf("Rol / Arquetipo", "Motivación", "Apariencia", "Defecto y arco")
+        "ESCENARIO" -> listOf("Tipo de lugar", "Atmósfera", "Reglas del mundo", "Secretos")
+        "TRAMA_SECUNDARIA" -> listOf("Tipo de trama", "Conflicto y apuestas", "Personajes implicados", "Resolución / notas")
+        else -> listOf("Rol", "Descripción", "Detalles", "Notas")
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Editar ficha: ${entry.name}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Nombre") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("edit_bible_name")
+                )
+                OutlinedTextField(
+                    value = role,
+                    onValueChange = { role = it },
+                    label = { Text(roleLabel) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text(descLabel) },
+                    modifier = Modifier.fillMaxWidth().height(88.dp)
+                )
+                OutlinedTextField(
+                    value = details,
+                    onValueChange = { details = it },
+                    label = { Text(detailsLabel) },
+                    modifier = Modifier.fillMaxWidth().height(88.dp)
+                )
+                OutlinedTextField(
+                    value = notes,
+                    onValueChange = { notes = it },
+                    label = { Text(notesLabel) },
+                    modifier = Modifier.fillMaxWidth().height(88.dp)
+                )
+                OutlinedTextField(
+                    value = status,
+                    onValueChange = { status = it },
+                    label = { Text("Estado") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) {
+                        onSave(name.trim(), role.trim(), description.trim(), details.trim(), notes.trim(), status.trim())
+                        onDismiss()
+                    }
+                },
+                enabled = name.isNotBlank()
+            ) {
+                Text("Guardar cambios")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }

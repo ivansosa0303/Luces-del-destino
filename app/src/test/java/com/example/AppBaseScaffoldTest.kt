@@ -44,7 +44,7 @@ class AppBaseScaffoldTest {
         // Verify Scaffold and TopAppBar
         composeTestRule.onNodeWithTag("app_base_scaffold").assertIsDisplayed()
         composeTestRule.onNodeWithTag("main_top_app_bar").assertIsDisplayed()
-        composeTestRule.onNodeWithText("DocMerge").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Luces del Destino").assertIsDisplayed()
         composeTestRule.onNodeWithText("OFFLINE").assertIsDisplayed()
 
         // Verify NavigationBar and all tabs

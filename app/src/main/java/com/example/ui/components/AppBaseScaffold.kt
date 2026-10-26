@@ -67,7 +67,7 @@ import com.google.firebase.auth.FirebaseUser
 
 /**
  * AppBaseScaffold provides a unified Material 3 Scaffold and TopAppBar
- * serving as the consistent navigation and action container for DocMerge.
+ * serving as the consistent navigation and action container for Luces del Destino.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -109,7 +109,7 @@ fun AppBaseScaffold(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = selectedProjectName ?: "DocMerge",
+                                text = selectedProjectName ?: "Luces del Destino",
                                 fontWeight = FontWeight.Black,
                                 fontSize = 18.sp,
                                 letterSpacing = (-0.5).sp,
@@ -234,7 +234,7 @@ fun AppBaseScaffold(
                         onDismissRequest = { showMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Acerca de DocMerge") },
+                            text = { Text("Acerca de Luces del Destino") },
                             leadingIcon = {
                                 Icon(
                                     Icons.Default.Info,
@@ -334,19 +334,19 @@ fun AppBaseScaffold(
             },
             title = {
                 Text(
-                    text = "DocMerge v1.0",
+                    text = "Luces del Destino v1.0",
                     fontWeight = FontWeight.Bold
                 )
             },
             text = {
                 Column {
                     Text(
-                        text = "Sistema unificado de procesamiento, conversión y compilación de documentos sin pérdida.",
+                        text = "Suite de escritura y edición de novelas, con conversión y compilación de documentos sin pérdida.",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Text(
-                        text = "• Formatos: TXT, Markdown (.md), JSON, PDF, DOCX e Imágenes.\n• Integridad: Verificación de hashes criptográficos SHA-256.\n• Offline-First: Funciona 100% en dispositivo con respaldo opcional en la nube.",
+                        text = "• Novelas: capítulos, fichas de personajes, escenarios y tramas.\n• Exportación: manuscrito en PDF o DOCX, además de TXT, Markdown y JSON.\n• Respaldo local en JSON y sincronización opcional en la nube.\n• Offline-First: el texto vive en tu dispositivo.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

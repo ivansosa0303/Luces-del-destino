@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,11 +23,16 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.FindReplace
 import androidx.compose.material.icons.filled.FormatAlignLeft
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -41,6 +47,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -55,7 +62,10 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -91,8 +101,13 @@ fun ChapterEditorScreen(
     content: String,
     editorialAnalysis: EditorialAnalysisResult,
     bibleEntries: List<StoryBibleEntity>,
+    saveStatus: String?,
+    canUndo: Boolean,
+    canRedo: Boolean,
     onContentChange: (String) -> Unit,
     onSave: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
     onBack: () -> Unit,
     onToggleStatus: (ChapterEntity) -> Unit,
     onApplyDialogueDashFix: () -> Unit,
@@ -103,6 +118,20 @@ fun ChapterEditorScreen(
     var showEditorialSheet by remember { mutableStateOf(false) }
     var selectedEditorialTab by remember { mutableIntStateOf(0) }
     var saveFeedback by remember { mutableStateOf(false) }
+    var focusMode by remember { mutableStateOf(false) }
+    var showFindReplace by remember { mutableStateOf(false) }
+
+    // En modo enfoque, "atrás" sale del modo en vez de cerrar el capítulo.
+    BackHandler(enabled = focusMode) { focusMode = false }
+
+    // El icono de guardado vuelve a su estado normal tras confirmar.
+    LaunchedEffect(saveStatus) {
+        if (saveStatus?.startsWith("Guardado") == true) {
+            saveFeedback = true
+            kotlinx.coroutines.delay(1600)
+            saveFeedback = false
+        }
+    }
 
     val statusColor = when (chapter.status) {
         "PULIDO" -> EmeraldPrimary
@@ -121,6 +150,7 @@ fun ChapterEditorScreen(
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // Top Toolbar
+            if (!focusMode) {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -135,10 +165,7 @@ fun ChapterEditorScreen(
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = {
-                        onSave()
-                        onBack()
-                    }) {
+                    IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Guardar y volver")
                     }
 
@@ -167,11 +194,25 @@ fun ChapterEditorScreen(
                                 )
                             }
                         }
-                        Text(
-                            text = "${editorialAnalysis.wordCount} palabras • ~${(editorialAnalysis.readingTimeMinutes).toInt().coerceAtLeast(1)} min de lectura",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "${editorialAnalysis.wordCount} palabras • ~${(editorialAnalysis.readingTimeMinutes).toInt().coerceAtLeast(1)} min de lectura",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (!saveStatus.isNullOrBlank()) {
+                                Text(
+                                    text = "  ·  $saveStatus",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (saveStatus.startsWith("Guardado")) {
+                                        EmeraldPrimary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.testTag("save_status_text")
+                                )
+                            }
+                        }
                     }
 
                     // Character & Plot Quick Lookup Button
@@ -251,6 +292,76 @@ fun ChapterEditorScreen(
                             contentDescription = "Guardar",
                             tint = if (saveFeedback) EmeraldPrimary else MaterialTheme.colorScheme.primary
                         )
+                    }
+                }
+            }
+
+            // Barra de acciones: deshacer, rehacer, buscar y modo enfoque.
+            // Antes no existía ninguna forma de recuperar texto borrado.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                IconButton(
+                    onClick = onUndo,
+                    enabled = canUndo,
+                    modifier = Modifier.testTag("btn_undo")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Undo,
+                        contentDescription = "Deshacer",
+                        tint = if (canUndo) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
+                }
+                IconButton(
+                    onClick = onRedo,
+                    enabled = canRedo,
+                    modifier = Modifier.testTag("btn_redo")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Redo,
+                        contentDescription = "Rehacer",
+                        tint = if (canRedo) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
+                }
+                IconButton(
+                    onClick = { showFindReplace = true },
+                    modifier = Modifier.testTag("btn_find_replace")
+                ) {
+                    Icon(Icons.Default.FindReplace, contentDescription = "Buscar y reemplazar")
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(
+                    onClick = { focusMode = true },
+                    modifier = Modifier.testTag("btn_focus_mode")
+                ) {
+                    Icon(Icons.Default.Fullscreen, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Enfoque", fontSize = 12.sp)
+                }
+            }
+            } else {
+                // Modo enfoque: solo el texto. Salir con el botón o con atrás.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Cap. ${chapter.chapterNumber} · ${editorialAnalysis.wordCount} palabras",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = { focusMode = false },
+                        modifier = Modifier.testTag("btn_exit_focus_mode")
+                    ) {
+                        Icon(Icons.Default.FullscreenExit, contentDescription = "Salir del modo enfoque")
                     }
                 }
             }
@@ -654,4 +765,106 @@ fun ChapterEditorScreen(
             }
         }
     }
+
+    if (showFindReplace) {
+        FindReplaceDialog(
+            content = content,
+            onDismiss = { showFindReplace = false },
+            onReplaceAll = { query, replacement, ignoreCase ->
+                val updated = if (ignoreCase) {
+                    Regex(Regex.escape(query), RegexOption.IGNORE_CASE)
+                        .replace(content, Regex.escapeReplacement(replacement))
+                } else {
+                    content.replace(query, replacement)
+                }
+                onContentChange(updated)
+            }
+        )
+    }
+}
+
+/**
+ * Buscar y reemplazar dentro del capítulo abierto.
+ *
+ * Trabaja sobre el texto completo en lugar de sobre la selección porque
+ * `OutlinedTextField` con `String` no expone la posición del cursor; así el
+ * usuario puede corregir un nombre de personaje mal escrito en todo el
+ * capítulo de una vez.
+ */
+@Composable
+private fun FindReplaceDialog(
+    content: String,
+    onDismiss: () -> Unit,
+    onReplaceAll: (query: String, replacement: String, ignoreCase: Boolean) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var replacement by remember { mutableStateOf("") }
+    var ignoreCase by remember { mutableStateOf(true) }
+
+    val matches = remember(content, query, ignoreCase) {
+        if (query.isEmpty()) {
+            0
+        } else if (ignoreCase) {
+            Regex(Regex.escape(query), RegexOption.IGNORE_CASE).findAll(content).count()
+        } else {
+            Regex(Regex.escape(query)).findAll(content).count()
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Buscar y reemplazar") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Buscar") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("find_query_input")
+                )
+                OutlinedTextField(
+                    value = replacement,
+                    onValueChange = { replacement = it },
+                    label = { Text("Reemplazar por") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("replace_query_input")
+                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.clickable { ignoreCase = !ignoreCase }
+                ) {
+                    Checkbox(
+                        checked = ignoreCase,
+                        onCheckedChange = { ignoreCase = it }
+                    )
+                    Text("Ignorar mayúsculas y minúsculas", fontSize = 12.sp)
+                }
+                Text(
+                    text = if (query.isEmpty()) {
+                        "Escribe el texto que quieres localizar."
+                    } else {
+                        "$matches coincidencia(s) en este capítulo."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onReplaceAll(query, replacement, ignoreCase)
+                    onDismiss()
+                },
+                enabled = query.isNotEmpty() && matches > 0,
+                modifier = Modifier.testTag("confirm_replace_all")
+            ) {
+                Text("Reemplazar todo")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancelar") }
+        }
+    )
 }

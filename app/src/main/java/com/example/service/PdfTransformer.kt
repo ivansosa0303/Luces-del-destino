@@ -64,7 +64,7 @@ class PdfTransformer(private val context: Context) {
 
             fun drawFooter(c: Canvas, pNum: Int) {
                 c.drawLine(margin, pageHeight - 35f, pageWidth - margin, pageHeight - 35f, borderPaint)
-                c.drawText("DocMerge • Transformación de Documentos", margin, pageHeight - 20f, metaPaint)
+                c.drawText("Luces del Destino • Transformación de Documentos", margin, pageHeight - 20f, metaPaint)
                 val pageText = "Página $pNum"
                 val pWidth = metaPaint.measureText(pageText)
                 c.drawText(pageText, pageWidth - margin - pWidth, pageHeight - 20f, metaPaint)
@@ -177,7 +177,7 @@ class PdfTransformer(private val context: Context) {
 
             fun drawFooter(c: Canvas, pNum: Int) {
                 c.drawLine(margin, pageHeight - 35f, pageWidth - margin, pageHeight - 35f, borderPaint)
-                c.drawText("DocMerge • Transformación Markdown a PDF", margin, pageHeight - 20f, metaPaint)
+                c.drawText("Luces del Destino • Transformación Markdown a PDF", margin, pageHeight - 20f, metaPaint)
                 val pageText = "Página $pNum"
                 val pWidth = metaPaint.measureText(pageText)
                 c.drawText(pageText, pageWidth - margin - pWidth, pageHeight - 20f, metaPaint)

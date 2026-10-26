@@ -70,6 +70,26 @@ android {
   }
 }
 
+// Robolectric 4.16.x no publica su runtime nativo para Linux/aarch64 (Termux,
+// proot, Raspberry Pi). En ese entorno las clases que lo usan fallan al iniciar
+// el sandbox con "The Robolectric native runtime is not supported on Linux
+// (aarch64)", aunque el código sea correcto. Se omiten para que
+// `./gradlew test` solo muestre fallos reales; en x86_64 se ejecutan igual.
+// Para forzarlas: ./gradlew test -PforceRobolectric=true
+val robolectricUnsupported = System.getProperty("os.name").orEmpty().startsWith("Linux") &&
+    System.getProperty("os.arch").orEmpty() in setOf("aarch64", "arm64")
+val forceRobolectric = providers.gradleProperty("forceRobolectric").orNull == "true"
+if (robolectricUnsupported && !forceRobolectric) {
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        filter {
+            excludeTestsMatching("com.example.AppBaseScaffoldTest.*")
+            excludeTestsMatching("com.example.ExampleRobolectricTest.*")
+            excludeTestsMatching("com.example.FileConverterServiceTest.*")
+            excludeTestsMatching("com.example.UriFileResolverServiceTest.*")
+        }
+    }
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {

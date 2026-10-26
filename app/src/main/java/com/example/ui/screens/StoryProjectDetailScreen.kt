@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,6 +72,7 @@ import com.example.ui.components.CreateChapterDialog
 import com.example.ui.components.CreateSettingDialog
 import com.example.ui.components.CreateSubplotDialog
 import com.example.ui.components.EditChapterMetadataDialog
+import com.example.ui.components.EditBibleEntryDialog
 import com.example.ui.theme.EditorialAmber
 import com.example.ui.theme.EditorialCyan
 import com.example.ui.theme.EditorialPurple
@@ -84,6 +89,8 @@ fun StoryProjectDetailScreen(
     recentGoals: List<DailyWritingGoalEntity>,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
+    bibleSearchQuery: String,
+    onBibleSearchQueryChange: (String) -> Unit,
     onBack: () -> Unit,
     onSelectChapter: (ChapterEntity) -> Unit,
     onCreateChapter: (title: String, summary: String, pov: String, targetWords: Int, notes: String) -> Unit,
@@ -97,16 +104,23 @@ fun StoryProjectDetailScreen(
     onCreateSetting: (name: String, locationType: String, atmosphere: String, worldRules: String, secrets: String) -> Unit = { _, _, _, _, _ -> },
     onCreateSubplot: (title: String, subplotType: String, conflictStakes: String, charactersInvolved: String, resolutionNotes: String, status: String) -> Unit = { _, _, _, _, _, _ -> },
     onCycleSubplotStatus: (StoryBibleEntity) -> Unit = {},
+    onUpdateBibleEntry: (StoryBibleEntity) -> Unit = {},
     onCreateBibleEntry: (category: String, name: String, role: String, desc: String, notes: String) -> Unit,
     onDeleteBibleEntry: (Long) -> Unit,
     onCompileStory: (SupportedFormat, (File) -> Unit) -> Unit,
+    onShareFile: (File, String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var showCreateChapterDialog by remember { mutableStateOf(false) }
     var editingChapter by remember { mutableStateOf<ChapterEntity?>(null) }
+    var editingBibleEntry by remember { mutableStateOf<StoryBibleEntity?>(null) }
+    var chapterPendingDelete by remember { mutableStateOf<ChapterEntity?>(null) }
+    var biblePendingDelete by remember { mutableStateOf<StoryBibleEntity?>(null) }
     var showCompileDialog by remember { mutableStateOf(false) }
     var compiledMessage by remember { mutableStateOf<String?>(null) }
+    var compiledFile by remember { mutableStateOf<File?>(null) }
+    var compiledMime by remember { mutableStateOf("text/plain") }
 
     // Dialog state for Character & Plot
     var showCreateCharacterDialog by remember { mutableStateOf(false) }
@@ -269,7 +283,9 @@ fun StoryProjectDetailScreen(
                         // Status Filter Chips
                         item {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 listOf(
@@ -313,7 +329,7 @@ fun StoryProjectDetailScreen(
                                 ChapterListItemCard(
                                     chapter = chap,
                                     onClick = { onSelectChapter(chap) },
-                                    onDelete = { onDeleteChapter(chap.id) },
+                                    onDelete = { chapterPendingDelete = chap },
                                     onToggleStatus = { onToggleChapterStatus(chap) },
                                     onMoveUp = { onMoveChapterUp(chap) },
                                     onMoveDown = { onMoveChapterDown(chap) },
@@ -335,8 +351,8 @@ fun StoryProjectDetailScreen(
                     ) {
                         item {
                             OutlinedTextField(
-                                value = searchQuery,
-                                onValueChange = onSearchQueryChange,
+                                value = bibleSearchQuery,
+                                onValueChange = onBibleSearchQueryChange,
                                 label = { Text("Buscar personaje, escenario o conflicto de trama...") },
                                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                                 modifier = Modifier
@@ -350,7 +366,9 @@ fun StoryProjectDetailScreen(
                         // Category Filter Chips with Icons and Counts
                         item {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 FilterChip(
@@ -409,10 +427,20 @@ fun StoryProjectDetailScreen(
                             }
                         } else {
                             items(filteredEntries, key = { it.id }) { entry ->
-                                BibleEntryItemCard(
-                                    entry = entry,
-                                    onDelete = { onDeleteBibleEntry(entry.id) }
-                                )
+                                // Toda la ficha abre el editor: antes solo se
+                                // podían crear y borrar, nunca corregir.
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { editingBibleEntry = entry }
+                                        .testTag("bible_entry_${entry.id}")
+                                ) {
+                                    BibleEntryItemCard(
+                                        entry = entry,
+                                        onDelete = { biblePendingDelete = entry },
+                                        onCycleStatus = { onCycleSubplotStatus(entry) }
+                                    )
+                                }
                             }
                         }
 
@@ -664,20 +692,32 @@ fun StoryProjectDetailScreen(
     }
 
     if (showCompileDialog) {
-        var format by remember { mutableStateOf(SupportedFormat.MD) }
+        var format by remember { mutableStateOf(SupportedFormat.PDF) }
 
         AlertDialog(
             onDismissRequest = { showCompileDialog = false },
-            title = { Text("Compilar Novela Completa") },
+            title = { Text("Exportar Novela Completa") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Selecciona el formato para unir y maquetar los ${chapters.size} capítulos en un único documento:")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
+                            selected = format == SupportedFormat.PDF,
+                            onClick = { format = SupportedFormat.PDF },
+                            label = { Text("PDF maquetado") }
+                        )
+                        FilterChip(
+                            selected = format == SupportedFormat.DOCX,
+                            onClick = { format = SupportedFormat.DOCX },
+                            label = { Text("Word (.docx)") }
+                        )
+                        FilterChip(
                             selected = format == SupportedFormat.MD,
                             onClick = { format = SupportedFormat.MD },
-                            label = { Text("Markdown (.md)") }
+                            label = { Text("Markdown") }
                         )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(
                             selected = format == SupportedFormat.TXT,
                             onClick = { format = SupportedFormat.TXT },
@@ -699,24 +739,118 @@ fun StoryProjectDetailScreen(
                 }
             },
             confirmButton = {
-                Button(
-                    onClick = {
-                        onCompileStory(format) { file ->
-                            compiledMessage = "¡Compilado con éxito en ${file.name}!"
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (compiledFile != null) {
+                        Button(
+                            onClick = {
+                                compiledFile?.let { onShareFile(it, compiledMime) }
+                            },
+                            modifier = Modifier.testTag("btn_share_compiled_story")
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Compartir")
                         }
-                    },
-                    modifier = Modifier.testTag("confirm_compile_story")
-                ) {
-                    Text("Compilar Ahora")
+                    }
+                    Button(
+                        onClick = {
+                            onCompileStory(format) { file ->
+                                compiledFile = file
+                                compiledMime = when (format) {
+                                    SupportedFormat.PDF -> "application/pdf"
+                                    SupportedFormat.DOCX -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                    SupportedFormat.JSON -> "application/json"
+                                    SupportedFormat.MD -> "text/markdown"
+                                    else -> "text/plain"
+                                }
+                                compiledMessage = "Listo: ${file.name}. Usa «Compartir» para enviarlo o guardarlo."
+                            }
+                        },
+                        modifier = Modifier.testTag("confirm_compile_story")
+                    ) {
+                        Text("Exportar")
+                    }
                 }
             },
             dismissButton = {
                 TextButton(onClick = {
                     showCompileDialog = false
                     compiledMessage = null
+                    compiledFile = null
                 }) {
                     Text("Cerrar")
                 }
+            }
+        )
+    }
+
+    // Confirmación antes de borrar: un capítulo o una ficha no se pueden
+    // recuperar, y antes el botón de papelera borraba al primer toque.
+    if (chapterPendingDelete != null) {
+        val target = chapterPendingDelete!!
+        AlertDialog(
+            onDismissRequest = { chapterPendingDelete = null },
+            title = { Text("¿Eliminar el capítulo?") },
+            text = {
+                Text("Se borrará «${target.title}» y su contenido (${target.wordCount} palabras). Esta acción no se puede deshacer.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteChapter(target.id)
+                        chapterPendingDelete = null
+                    },
+                    modifier = Modifier.testTag("confirm_delete_chapter")
+                ) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { chapterPendingDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    if (biblePendingDelete != null) {
+        val target = biblePendingDelete!!
+        AlertDialog(
+            onDismissRequest = { biblePendingDelete = null },
+            title = { Text("¿Eliminar la ficha?") },
+            text = { Text("Se borrará «${target.name}» de la biblia de la novela.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteBibleEntry(target.id)
+                        biblePendingDelete = null
+                    },
+                    modifier = Modifier.testTag("confirm_delete_bible_entry")
+                ) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { biblePendingDelete = null }) { Text("Cancelar") }
+            }
+        )
+    }
+
+    if (editingBibleEntry != null) {
+        val target = editingBibleEntry!!
+        EditBibleEntryDialog(
+            entry = target,
+            onDismiss = { editingBibleEntry = null },
+            onSave = { name, role, description, details, notes, status ->
+                onUpdateBibleEntry(
+                    target.copy(
+                        name = name,
+                        roleOrLocation = role,
+                        description = description,
+                        appearanceOrDetails = details,
+                        notes = notes,
+                        status = status
+                    )
+                )
+                editingBibleEntry = null
             }
         )
     }

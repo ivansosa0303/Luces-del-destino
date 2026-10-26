@@ -94,7 +94,7 @@ class PdfCompiler(private val context: Context) {
                     textSize = 8f
                 }
                 c.drawLine(margin, pageHeight - 35f, pageWidth - margin, pageHeight - 35f, borderPaint)
-                c.drawText("DocMerge • Compilación de Archivos Offline", margin, pageHeight - 22f, fPaint)
+                c.drawText("Luces del Destino • Compilación de Archivos Offline", margin, pageHeight - 22f, fPaint)
                 val pageText = "Página $pNum"
                 val pWidth = fPaint.measureText(pageText)
                 c.drawText(pageText, pageWidth - margin - pWidth, pageHeight - 22f, fPaint)

@@ -8,7 +8,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -25,12 +24,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 
+/**
+ * Autenticación opcional con Google.
+ *
+ * Firebase es un extra en esta app (la escritura es 100 % local), así que todo
+ * el flujo falla de forma silenciosa y controlada si la compilación no trae
+ * `google-services.json`. Antes, `Firebase.auth` se resolvía en el constructor
+ * y la app no arrancaba sin configuración de Firebase.
+ */
 class AuthManager(private val context: Context) {
 
-    private val auth: FirebaseAuth = Firebase.auth
-    private val credentialManager = CredentialManager.create(context)
+    private val auth: FirebaseAuth? = runCatching { Firebase.auth }.getOrNull()
 
-    private val _currentUser = MutableStateFlow<FirebaseUser?>(auth.currentUser)
+    private val credentialManager: CredentialManager? = runCatching {
+        CredentialManager.create(context)
+    }.getOrNull()
+
+    val isConfigured: Boolean get() = auth != null
+
+    private val _currentUser = MutableStateFlow<FirebaseUser?>(auth?.currentUser)
     val currentUser: StateFlow<FirebaseUser?> = _currentUser.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
@@ -40,22 +52,20 @@ class AuthManager(private val context: Context) {
     val authError: StateFlow<String?> = _authError.asStateFlow()
 
     init {
-        auth.addAuthStateListener { firebaseAuth ->
+        auth?.addAuthStateListener { firebaseAuth ->
             _currentUser.value = firebaseAuth.currentUser
         }
     }
 
     fun attemptAutoSignIn(scope: CoroutineScope) {
+        val auth = this.auth ?: return
+        val credentialManager = this.credentialManager ?: return
         if (auth.currentUser != null) {
             _currentUser.value = auth.currentUser
             return
         }
 
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
-            return
-        }
+        val clientId = webClientId() ?: return
 
         val googleIdOption = GetGoogleIdOption.Builder()
             .setFilterByAuthorizedAccounts(true)
@@ -84,16 +94,22 @@ class AuthManager(private val context: Context) {
     }
 
     fun signInWithGoogle(activityContext: Context, scope: CoroutineScope, onSuccess: () -> Unit = {}) {
-        _isLoading.value = true
         _authError.value = null
 
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (e: Exception) {
-            _authError.value = "Configuración de Google Sign-In no encontrada (default_web_client_id)"
-            _isLoading.value = false
+        val auth = this.auth
+        val credentialManager = this.credentialManager
+        if (auth == null || credentialManager == null) {
+            _authError.value = "Firebase no está configurado en esta compilación. La app funciona sin conexión."
             return
         }
+
+        val clientId = webClientId()
+        if (clientId == null) {
+            _authError.value = "Falta la configuración de Google Sign-In (google-services.json)."
+            return
+        }
+
+        _isLoading.value = true
 
         val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
         val request = GetCredentialRequest.Builder()
@@ -127,11 +143,11 @@ class AuthManager(private val context: Context) {
     }
 
     fun signOut(scope: CoroutineScope) {
-        auth.signOut()
+        auth?.signOut()
         _currentUser.value = null
         scope.launch {
             try {
-                credentialManager.clearCredentialState(ClearCredentialStateRequest())
+                credentialManager?.clearCredentialState(ClearCredentialStateRequest())
             } catch (e: Exception) {
                 Log.e("AuthManager", "Error al limpiar estado de credenciales", e)
             }
@@ -140,5 +156,23 @@ class AuthManager(private val context: Context) {
 
     fun clearError() {
         _authError.value = null
+    }
+
+    /**
+     * `default_web_client_id` la genera el plugin de Google Services a partir de
+     * `google-services.json`. Si no existe, devolvemos null en vez de romper la
+     * compilación.
+     */
+    private fun webClientId(): String? {
+        return try {
+            val resId = context.resources.getIdentifier(
+                "default_web_client_id",
+                "string",
+                context.packageName
+            )
+            if (resId != 0) context.getString(resId) else null
+        } catch (_: Exception) {
+            null
+        }
     }
 }
