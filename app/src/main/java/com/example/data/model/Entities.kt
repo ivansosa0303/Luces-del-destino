@@ -98,3 +98,12 @@ data class CompilationRecordEntity(
     val sourceItemCount: Int = 0,
     val createdAt: Long = System.currentTimeMillis()
 )
+
+/**
+ * Proyección (no es una tabla) para mostrar el número real de capítulos de
+ * cada novela en la lista de proyectos. Antes la UI pasaba un `0` fijo.
+ */
+data class ProjectChapterCount(
+    val projectId: Long,
+    val chapterCount: Int
+)

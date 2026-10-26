@@ -13,21 +13,33 @@ import kotlinx.coroutines.tasks.await
 
 class FirestoreSyncRepository(context: Context) {
 
-    private val db: FirebaseFirestore = FirebaseFirestore.getInstance(
-        context.applicationContext.getString(R.string.firestore_database_id)
-    )
+    /**
+     * Firebase es opcional: si la compilación no trae `google-services.json`,
+     * `getInstance` lanza y la app no debería caerse por un extra de nube.
+     */
+    private val db: FirebaseFirestore? = runCatching {
+        FirebaseFirestore.getInstance(
+            context.applicationContext.getString(R.string.firestore_database_id)
+        )
+    }.getOrNull()
 
-    private val auth = Firebase.auth
+    private val auth: com.google.firebase.auth.FirebaseAuth? =
+        runCatching { Firebase.auth }.getOrNull()
+
+    val isAvailable: Boolean get() = db != null && auth != null
+
+    private fun requireDb(): FirebaseFirestore = db
+        ?: throw IllegalStateException("Firebase no está configurado en esta compilación.")
 
     private fun requireUserId(): String {
-        return auth.currentUser?.uid
+        return auth?.currentUser?.uid
             ?: throw IllegalStateException("Se requiere iniciar sesión con Google para sincronizar con Firestore.")
     }
 
     suspend fun syncProjectToCloud(project: ProjectEntity) {
         val uid = requireUserId()
         val docPath = "users/$uid/projects/proj_${project.id}"
-        val docRef = db.collection("users").document(uid).collection("projects").document("proj_${project.id}")
+        val docRef = requireDb().collection("users").document(uid).collection("projects").document("proj_${project.id}")
 
         try {
             val payload = mapOf(
@@ -48,7 +60,7 @@ class FirestoreSyncRepository(context: Context) {
     suspend fun syncDocumentToCloud(doc: DocumentItemEntity) {
         val uid = requireUserId()
         val docPath = "users/$uid/documents/doc_${doc.id}"
-        val docRef = db.collection("users").document(uid).collection("documents").document("doc_${doc.id}")
+        val docRef = requireDb().collection("users").document(uid).collection("documents").document("doc_${doc.id}")
 
         try {
             val payload = mapOf(
@@ -75,7 +87,7 @@ class FirestoreSyncRepository(context: Context) {
     suspend fun syncCompilationToCloud(record: CompilationRecordEntity) {
         val uid = requireUserId()
         val docPath = "users/$uid/compilations/comp_${record.id}"
-        val docRef = db.collection("users").document(uid).collection("compilations").document("comp_${record.id}")
+        val docRef = requireDb().collection("users").document(uid).collection("compilations").document("comp_${record.id}")
 
         try {
             val payload = mapOf(

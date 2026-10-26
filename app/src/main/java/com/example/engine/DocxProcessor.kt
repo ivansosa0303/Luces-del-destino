@@ -136,7 +136,7 @@ class DocxProcessor {
         sb.append("<w:pPr><w:jc w:val=\"center\"/></w:pPr>")
         sb.append("<w:r>")
         sb.append("<w:rPr><w:i/><w:sz w:val=\"20\"/><w:color w:val=\"64748B\"/></w:rPr>")
-        sb.append("<w:t>Compilado y unificado con DocMerge (Offline)</w:t>")
+        sb.append("<w:t>Luces del Destino · Manuscrito exportado sin conexión</w:t>")
         sb.append("</w:r>")
         sb.append("</w:p>")
 

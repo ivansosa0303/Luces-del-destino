@@ -11,6 +11,7 @@ import com.example.data.model.CompilationRecordEntity
 import com.example.data.model.DailyWritingGoalEntity
 import com.example.data.model.DocumentItemEntity
 import com.example.data.model.ProjectEntity
+import com.example.data.model.ProjectChapterCount
 import com.example.data.model.StoryBibleEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +22,12 @@ interface ProjectDao {
 
     @Query("SELECT * FROM projects WHERE isStoryProject = 1 ORDER BY updatedAt DESC")
     fun getStoryProjects(): Flow<List<ProjectEntity>>
+
+    @Query("SELECT * FROM projects WHERE isStoryProject = 1 ORDER BY updatedAt DESC")
+    suspend fun getStoryProjectsList(): List<ProjectEntity>
+
+    @Query("SELECT projectId, COUNT(*) AS chapterCount FROM chapters GROUP BY projectId")
+    fun getChapterCounts(): Flow<List<ProjectChapterCount>>
 
     @Query("SELECT * FROM projects WHERE id = :id")
     suspend fun getProjectById(id: Long): ProjectEntity?
@@ -81,6 +88,9 @@ interface StoryBibleDao {
     @Query("SELECT * FROM story_bible WHERE projectId = :projectId ORDER BY category ASC, name ASC")
     fun getBibleEntriesByProject(projectId: Long): Flow<List<StoryBibleEntity>>
 
+    @Query("SELECT * FROM story_bible WHERE projectId = :projectId ORDER BY category ASC, name ASC")
+    suspend fun getBibleEntriesList(projectId: Long): List<StoryBibleEntity>
+
     @Query("SELECT * FROM story_bible WHERE projectId = :projectId AND category = :category ORDER BY name ASC")
     fun getBibleEntriesByCategory(projectId: Long, category: String): Flow<List<StoryBibleEntity>>
 
@@ -125,11 +135,17 @@ interface DailyWritingGoalDao {
     @Query("SELECT * FROM daily_writing_goals WHERE projectId = :projectId ORDER BY dateKey DESC LIMIT 7")
     fun getRecentGoals(projectId: Long): Flow<List<DailyWritingGoalEntity>>
 
+    @Query("SELECT * FROM daily_writing_goals WHERE projectId = :projectId ORDER BY dateKey DESC")
+    suspend fun getGoalsByProject(projectId: Long): List<DailyWritingGoalEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdateGoal(goal: DailyWritingGoalEntity): Long
 
     @Query("UPDATE daily_writing_goals SET wordsWritten = wordsWritten + :deltaWords WHERE dateKey = :dateKey AND projectId = :projectId")
     suspend fun addWordsToToday(dateKey: String, projectId: Long, deltaWords: Int)
+
+    @Query("DELETE FROM daily_writing_goals WHERE projectId = :projectId")
+    suspend fun deleteGoalsByProject(projectId: Long)
 }
 
 @Dao

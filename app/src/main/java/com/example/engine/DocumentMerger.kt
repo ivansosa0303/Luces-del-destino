@@ -142,7 +142,7 @@ class DocumentMerger(
         return pdfCompiler.compileToPdf(
             destFile = destFile,
             documentTitle = options.outputTitle,
-            projectDescription = "Compilación multi-formato sin pérdida de datos. Creado sin conexión con DocMerge.",
+            projectDescription = "Compilación multi-formato sin pérdida de datos. Creado sin conexión con Luces del Destino.",
             items = pdfItems
         )
     }
@@ -154,7 +154,7 @@ class DocumentMerger(
             sb.append("# ${options.outputTitle}\n\n")
             sb.append("> **Fecha de compilación:** $dateStr  \n")
             sb.append("> **Total de archivos unificados:** ${docs.size}  \n")
-            sb.append("> **Generado con:** DocMerge (100% Offline)\n\n")
+            sb.append("> **Generado con:** Luces del Destino (100% Offline)\n\n")
 
             if (options.includeTableOfContents) {
                 sb.append("## Tabla de Contenidos\n\n")
@@ -216,7 +216,7 @@ class DocumentMerger(
             root.put("bundleTitle", options.outputTitle)
             root.put("compiledAt", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date()))
             root.put("totalFiles", docs.size)
-            root.put("generator", "DocMerge Android Offline Engine")
+            root.put("generator", "Luces del Destino Android Offline Engine")
 
             val docArray = JSONArray()
             docs.forEachIndexed { idx, doc ->
@@ -286,7 +286,7 @@ class DocumentMerger(
 
             sb.append(bannerLine).append("\n")
             sb.append("  ").append(options.outputTitle.uppercase(Locale.ROOT)).append("\n")
-            sb.append("  Compilado: ").append(dateStr).append(" (DocMerge Offline)\n")
+            sb.append("  Compilado: ").append(dateStr).append(" (Luces del Destino Offline)\n")
             sb.append("  Total de Documentos: ").append(docs.size).append("\n")
             sb.append(bannerLine).append("\n\n")
 
@@ -331,7 +331,7 @@ class DocumentMerger(
                 val manifestSb = StringBuilder()
                 manifestSb.append("# Resumen de Compilación: ${options.outputTitle}\n\n")
                 manifestSb.append("- Fecha: $dateStr\n")
-                manifestSb.append("- Generador: DocMerge Offline Project Compiler\n\n")
+                manifestSb.append("- Generador: Luces del Destino Offline Project Compiler\n\n")
                 manifestSb.append("## Archivos incluidos en este paquete:\n\n")
 
                 docs.forEachIndexed { idx, doc ->
@@ -407,7 +407,7 @@ class DocumentMerger(
             // Draw Header
             canvas.drawText(options.outputTitle, 50f, 80f, titlePaint)
             val dateStr = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
-            canvas.drawText("$dateStr • ${docs.size} documentos compilados • DocMerge", 50f, 130f, subPaint)
+            canvas.drawText("$dateStr • ${docs.size} documentos compilados • Luces del Destino", 50f, 130f, subPaint)
             canvas.drawLine(50f, 170f, width - 50f, 170f, borderPaint)
 
             var y = 200f

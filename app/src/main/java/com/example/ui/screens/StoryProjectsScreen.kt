@@ -19,15 +19,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoStories
+import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,13 +54,17 @@ import com.example.ui.theme.EmeraldPrimary
 @Composable
 fun StoryProjectsScreen(
     stories: List<ProjectEntity>,
+    chapterCounts: Map<Long, Int>,
     onSelectStory: (Long) -> Unit,
     onCreateStory: (title: String, genre: String, synopsis: String, targetWords: Int, colorHex: String) -> Unit,
     onDeleteStory: (Long) -> Unit,
+    onExportBackup: () -> Unit,
+    onImportBackup: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var storyPendingDelete by remember { mutableStateOf<ProjectEntity?>(null) }
 
     val filteredStories = if (searchQuery.isBlank()) {
         stories
@@ -138,6 +147,44 @@ fun StoryProjectsScreen(
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Comenzar Nueva Novela")
                         }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        // Copia de seguridad local: es la única red de
+                        // seguridad real si el móvil se pierde o la app se
+                        // reinstala. La nube es opcional.
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onExportBackup,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("btn_export_backup")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileDownload,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Respaldar", fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = onImportBackup,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("btn_import_backup")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FileUpload,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Restaurar", fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -194,10 +241,10 @@ fun StoryProjectsScreen(
                 items(filteredStories, key = { it.id }) { story ->
                     StoryProjectCard(
                         project = story,
-                        chaptersCount = 0, // dynamic count in detail or passed in
+                        chaptersCount = chapterCounts[story.id] ?: 0,
                         totalWords = story.currentWordCount,
                         onClick = { onSelectStory(story.id) },
-                        onDelete = { onDeleteStory(story.id) }
+                        onDelete = { storyPendingDelete = story }
                     )
                 }
             }
@@ -224,6 +271,36 @@ fun StoryProjectsScreen(
         CreateStoryDialog(
             onDismiss = { showCreateDialog = false },
             onCreate = onCreateStory
+        )
+    }
+
+    // Confirmación de borrado de novela completa (capítulos incluidos).
+    if (storyPendingDelete != null) {
+        val target = storyPendingDelete!!
+        AlertDialog(
+            onDismissRequest = { storyPendingDelete = null },
+            title = { Text("¿Eliminar la novela?") },
+            text = {
+                Text(
+                    "Se borrará «${target.name}» con sus " +
+                        "${chapterCounts[target.id] ?: 0} capítulos y todas sus fichas. " +
+                        "Esta acción no se puede deshacer. Si dudas, usa antes «Respaldar»."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteStory(target.id)
+                        storyPendingDelete = null
+                    },
+                    modifier = Modifier.testTag("confirm_delete_story")
+                ) {
+                    Text("Eliminar", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { storyPendingDelete = null }) { Text("Cancelar") }
+            }
         )
     }
 }

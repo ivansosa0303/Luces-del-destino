@@ -4,12 +4,17 @@ import com.example.data.local.ChapterDao
 import com.example.data.local.DailyWritingGoalDao
 import com.example.data.local.ProjectDao
 import com.example.data.local.StoryBibleDao
+import com.example.data.backup.BackupProject
+import com.example.data.backup.ImportSummary
+import com.example.data.backup.StoryBackup
 import com.example.data.model.ChapterEntity
 import com.example.data.model.DailyWritingGoalEntity
+import com.example.data.model.ProjectChapterCount
 import com.example.data.model.ProjectEntity
 import com.example.data.model.StoryBibleEntity
 import com.example.data.model.SupportedFormat
 import com.example.engine.FileStorageManager
+import com.example.engine.TextMetrics
 import kotlinx.coroutines.flow.Flow
 import java.io.File
 import java.text.SimpleDateFormat
@@ -58,6 +63,9 @@ class StoryRepository(
     suspend fun deleteStoryProject(projectId: Long) {
         chapterDao.deleteChaptersByProject(projectId)
         storyBibleDao.deleteBibleEntriesByProject(projectId)
+        // Sin esto quedaban metas diarias huérfanas que ya no pertenecían a
+        // ninguna novela y engordaban la base de datos.
+        dailyGoalDao.deleteGoalsByProject(projectId)
         projectDao.deleteProjectById(projectId)
     }
 
@@ -80,7 +88,7 @@ class StoryRepository(
         notes: String = ""
     ): Long {
         val currentCount = chapterDao.countChaptersByProject(projectId)
-        val words = if (content.isBlank()) 0 else content.trim().split(Regex("\\s+")).size
+        val words = TextMetrics.countWords(content)
         val entity = ChapterEntity(
             projectId = projectId,
             chapterNumber = currentCount + 1,
@@ -101,8 +109,22 @@ class StoryRepository(
         return id
     }
 
+    /**
+     * Cambia solo el estado editorial del capítulo.
+     *
+     * No reutiliza [updateChapter] a propósito: ese método escribe también el
+     * contenido recibido, y la UI suele tener una copia antigua del texto. Un
+     * toque en la etiqueta de estado podía sobrescribir lo recién escrito.
+     */
+    suspend fun updateChapterStatus(chapterId: Long, status: String) {
+        val existing = chapterDao.getChapterById(chapterId) ?: return
+        chapterDao.updateChapter(
+            existing.copy(status = status, updatedAt = System.currentTimeMillis())
+        )
+    }
+
     suspend fun updateChapter(chapter: ChapterEntity) {
-        val words = if (chapter.content.isBlank()) 0 else chapter.content.trim().split(Regex("\\s+")).size
+        val words = TextMetrics.countWords(chapter.content)
         chapterDao.updateChapter(
             chapter.copy(
                 wordCount = words,
@@ -111,6 +133,33 @@ class StoryRepository(
         )
         refreshProjectWordCount(chapter.projectId)
     }
+
+    /**
+     * Guardado real de un capítulo desde el editor.
+     *
+     * Relee la fila de la base de datos antes de escribir, de modo que no se
+     * pisen cambios de metadatos (título, estado, POV) hechos mientras el
+     * usuario escribía. Además calcula el delta de palabras y lo registra en la
+     * meta diaria: antes ese delta siempre era 0 y la racha nunca subía.
+     */
+    suspend fun saveChapterContent(chapterId: Long, content: String): ChapterEntity? {
+        val existing = chapterDao.getChapterById(chapterId) ?: return null
+        val words = TextMetrics.countWords(content)
+        val delta = (words - existing.wordCount).coerceAtLeast(0)
+        val updated = existing.copy(
+            content = content,
+            wordCount = words,
+            updatedAt = System.currentTimeMillis()
+        )
+        chapterDao.updateChapter(updated)
+        refreshProjectWordCount(existing.projectId)
+        if (delta > 0) {
+            recordWritingProgress(existing.projectId, delta)
+        }
+        return updated
+    }
+
+    fun getChapterCounts(): Flow<List<ProjectChapterCount>> = projectDao.getChapterCounts()
 
     suspend fun updateChapterMetadata(
         chapterId: Long,
@@ -286,6 +335,85 @@ class StoryRepository(
 
     fun getRecentGoals(projectId: Long): Flow<List<DailyWritingGoalEntity>> =
         dailyGoalDao.getRecentGoals(projectId)
+
+    // ---- Copia de seguridad completa (JSON) ----
+
+    suspend fun exportBackupJson(): String {
+        val projects = projectDao.getStoryProjectsList()
+        val backups = projects.map { project ->
+            BackupProject(
+                name = project.name,
+                genre = project.genre,
+                synopsis = project.synopsis,
+                targetWordCount = project.targetWordCount,
+                colorHex = project.colorHex,
+                chapters = chapterDao.getChaptersListByProject(project.id),
+                bible = storyBibleDao.getBibleEntriesList(project.id),
+                goals = dailyGoalDao.getGoalsByProject(project.id)
+            )
+        }
+        return StoryBackup.encode(backups)
+    }
+
+    suspend fun importBackupJson(json: String): ImportSummary {
+        val backups = StoryBackup.decode(json)
+        var chapterTotal = 0
+        var bibleTotal = 0
+        val now = System.currentTimeMillis()
+
+        backups.forEach { backup ->
+            val projectId = projectDao.insertProject(
+                ProjectEntity(
+                    name = backup.name.ifBlank { "Novela restaurada" },
+                    description = backup.synopsis,
+                    colorHex = backup.colorHex,
+                    isStoryProject = true,
+                    genre = backup.genre.ifBlank { "Novela" },
+                    synopsis = backup.synopsis,
+                    targetWordCount = backup.targetWordCount,
+                    currentWordCount = 0,
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+
+            backup.chapters.forEach { chapter ->
+                chapterDao.insertChapter(
+                    chapter.copy(
+                        id = 0,
+                        projectId = projectId,
+                        wordCount = if (chapter.wordCount > 0) {
+                            chapter.wordCount
+                        } else {
+                            TextMetrics.countWords(chapter.content)
+                        },
+                        createdAt = now,
+                        updatedAt = now
+                    )
+                )
+                chapterTotal++
+            }
+
+            backup.bible.forEach { entry ->
+                storyBibleDao.insertBibleEntry(
+                    entry.copy(id = 0, projectId = projectId, createdAt = now, updatedAt = now)
+                )
+                bibleTotal++
+            }
+
+            backup.goals.forEach { goal ->
+                dailyGoalDao.insertOrUpdateGoal(goal.copy(id = 0, projectId = projectId))
+            }
+
+            refreshProjectWordCount(projectId)
+        }
+
+        return ImportSummary(
+            projects = backups.size,
+            chapters = chapterTotal,
+            bibleEntries = bibleTotal
+        )
+    }
 
     // Book Compilation helper
     fun buildBookManuscriptText(

@@ -138,6 +138,12 @@ fun CloudSyncDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Importante: los capítulos de tus novelas no se suben a la nube. Para proteger el manuscrito usa «Respaldar» en la pantalla de novelas.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
 
                     if (!syncMessage.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(10.dp))

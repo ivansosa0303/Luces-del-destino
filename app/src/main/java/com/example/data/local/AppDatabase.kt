@@ -42,7 +42,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "docmerge_database.db"
                 )
-                    .fallbackToDestructiveMigration()
+                    // Solo se permite destruir datos al bajar de versión (downgrade),
+                    // nunca al actualizar la app: antes cualquier cambio de esquema
+                    // borraba la novela completa del usuario.
+                    .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
                     .build()
                 INSTANCE = instance
                 instance

@@ -92,7 +92,7 @@ object StoryEditorialEngine {
         }
 
         val rawWords = text.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-        val wordCount = rawWords.size
+        val wordCount = TextMetrics.countWords(text)
         val characterCount = text.length
         val paragraphs = text.split(Regex("\n+")).filter { it.trim().isNotEmpty() }
         val paragraphCount = paragraphs.size

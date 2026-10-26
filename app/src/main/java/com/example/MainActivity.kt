@@ -1,13 +1,19 @@
 package com.example
 
+import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
+import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -147,7 +153,28 @@ class MainActivity : ComponentActivity() {
                 val storyBibleEntries by viewModel.storyBibleEntries.collectAsStateWithLifecycle()
                 val filteredBibleEntries by viewModel.filteredBibleEntries.collectAsStateWithLifecycle()
                 val chapterSearchQuery by viewModel.chapterSearchQuery.collectAsStateWithLifecycle()
+                val bibleSearchQuery by viewModel.bibleSearchQuery.collectAsStateWithLifecycle()
                 val recentGoals by viewModel.recentGoals.collectAsStateWithLifecycle()
+                val chapterCounts by viewModel.chapterCounts.collectAsStateWithLifecycle()
+                val canUndo by viewModel.canUndo.collectAsStateWithLifecycle()
+                val canRedo by viewModel.canRedo.collectAsStateWithLifecycle()
+                val saveStatus by viewModel.saveStatus.collectAsStateWithLifecycle()
+
+                val importBackupLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenDocument()
+                ) { uri ->
+                    if (uri != null) {
+                        viewModel.importBackup(
+                            uri = uri,
+                            onResult = { summary ->
+                                viewModel.showMessage(
+                                    "Respaldo restaurado: ${summary.projects} novelas y ${summary.chapters} capítulos."
+                                )
+                            },
+                            onError = { error -> viewModel.showMessage(error) }
+                        )
+                    }
+                }
 
                 var currentTab by remember { mutableStateOf(AppNavTab.STORIES) }
 
@@ -219,8 +246,13 @@ class MainActivity : ComponentActivity() {
                                             content = chapterContent,
                                             editorialAnalysis = editorialAnalysis,
                                             bibleEntries = storyBibleEntries,
+                                            saveStatus = saveStatus,
+                                            canUndo = canUndo,
+                                            canRedo = canRedo,
                                             onContentChange = { viewModel.updateChapterContent(it) },
                                             onSave = { viewModel.saveActiveChapter() },
+                                            onUndo = { viewModel.undo() },
+                                            onRedo = { viewModel.redo() },
                                             onBack = {
                                                 viewModel.saveActiveChapter()
                                                 viewModel.selectChapter(null)
@@ -246,10 +278,12 @@ class MainActivity : ComponentActivity() {
                                             recentGoals = recentGoals,
                                             searchQuery = chapterSearchQuery,
                                             onSearchQueryChange = { viewModel.setChapterSearchQuery(it) },
+                                            bibleSearchQuery = bibleSearchQuery,
+                                            onBibleSearchQueryChange = { viewModel.setBibleSearchQuery(it) },
                                             onBack = { viewModel.selectStoryProject(null) },
                                             onSelectChapter = { chap -> viewModel.selectChapter(chap) },
-                                            onCreateChapter = { title, summary, pov ->
-                                                viewModel.createChapter(title, summary, pov)
+                                            onCreateChapter = { title, summary, pov, targetWords, notes ->
+                                                viewModel.createChapter(title, summary, pov, targetWords, notes)
                                             },
                                             onDeleteChapter = { id -> viewModel.deleteChapter(id) },
                                             onToggleChapterStatus = { chap ->
@@ -260,23 +294,59 @@ class MainActivity : ComponentActivity() {
                                                 }
                                                 viewModel.updateChapterMetadata(chap.copy(status = nextStatus))
                                             },
+                                            onMoveChapterUp = { chap -> viewModel.moveChapterUp(chap) },
+                                            onMoveChapterDown = { chap -> viewModel.moveChapterDown(chap) },
+                                            onDuplicateChapter = { chap -> viewModel.duplicateChapter(chap) },
+                                            onUpdateChapterMetadata = { id, title, summary, pov, target, notes ->
+                                                viewModel.updateChapterDetails(id, title, summary, pov, target, notes)
+                                            },
+                                            onCreateCharacter = { name, role, motivation, appearance, flaw ->
+                                                viewModel.addCharacter(name, role, motivation, appearance, flaw)
+                                            },
+                                            onCreateSetting = { name, type, atmosphere, rules, secrets ->
+                                                viewModel.addSetting(name, type, atmosphere, rules, secrets)
+                                            },
+                                            onCreateSubplot = { title, type, stakes, characters, resolution, status ->
+                                                viewModel.addSubplot(title, type, stakes, characters, resolution, status)
+                                            },
+                                            onCycleSubplotStatus = { entry -> viewModel.cycleSubplotStatus(entry) },
+                                            onUpdateBibleEntry = { entry -> viewModel.updateBibleEntry(entry) },
                                             onCreateBibleEntry = { cat, name, role, desc, notes ->
                                                 viewModel.addBibleEntry(cat, name, role, desc, notes)
                                             },
                                             onDeleteBibleEntry = { id -> viewModel.deleteBibleEntry(id) },
                                             onCompileStory = { format, callback ->
-                                                viewModel.compileStory(format, callback)
-                                            }
+                                                viewModel.compileStory(
+                                                    format = format,
+                                                    onResult = callback,
+                                                    onError = { error -> viewModel.showMessage(error) }
+                                                )
+                                            },
+                                            onShareFile = { file, mime -> shareFile(this@MainActivity, file, mime) }
                                         )
                                     }
                                     else -> {
                                         StoryProjectsScreen(
                                             stories = storyProjects,
+                                            chapterCounts = chapterCounts,
                                             onSelectStory = { id -> viewModel.selectStoryProject(id) },
                                             onCreateStory = { title, genre, synopsis, words, color ->
                                                 viewModel.createStoryProject(title, genre, synopsis, words, color)
                                             },
-                                            onDeleteStory = { id -> viewModel.deleteStoryProject(id) }
+                                            onDeleteStory = { id -> viewModel.deleteStoryProject(id) },
+                                            onExportBackup = {
+                                                viewModel.exportBackup(
+                                                    onResult = { file ->
+                                                        shareFile(this@MainActivity, file, "application/json")
+                                                    },
+                                                    onError = { error -> viewModel.showMessage(error) }
+                                                )
+                                            },
+                                            onImportBackup = {
+                                                importBackupLauncher.launch(
+                                                    arrayOf("application/json", "text/plain", "*/*")
+                                                )
+                                            }
                                         )
                                     }
                                 }
@@ -413,5 +483,44 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         viewModel.handleIncomingIntent(intent)
+    }
+
+    /**
+     * Al salir de la app (o al minimizarla) se fuerza el guardado del capítulo
+     * abierto. Antes, cerrar la app desde recientes podía perder lo último
+     * escrito si el autoguardado aún no había disparado.
+     */
+    override fun onPause() {
+        viewModel.flushActiveChapter()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        viewModel.flushActiveChapter()
+        super.onStop()
+    }
+}
+
+/**
+ * Comparte un archivo exportado usando FileProvider (el mismo patrón que ya
+ * usaba el conversor de documentos). Sin esto, la novela exportada quedaba
+ * atrapada en el almacenamiento privado de la app.
+ */
+private fun shareFile(context: Context, file: File, mimeType: String) {
+    try {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, file.name)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, "Compartir ${file.name}"))
+    } catch (e: Exception) {
+        android.util.Log.e("MainActivity", "No se pudo compartir ${file.name}", e)
     }
 }
